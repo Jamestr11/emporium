@@ -66,7 +66,7 @@ Anything that runs Python and keeps a disk works (Railway, Render, Fly.io, a sch
 | Variable | Default | Purpose |
 |---|---|---|
 | `DB_PATH` | `./emporium.db` | Where orders and inventory are stored |
-| `UPLOAD_DIR` | `uploads/` next to the database | Where photos and 3D models are stored |
+| `UPLOAD_DIR` | `uploads/` next to the database | Where uploaded photos are stored |
 | `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
 | `PORT` | `8000` | Port to listen on (`server.py` only) |
 | `ADMIN_PASSWORD` | unset | Optional: fix the staff password from the server instead of creating it on the staff page |
