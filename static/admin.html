@@ -305,7 +305,7 @@ async function runLookup(query) {
   auto.busy = false; renderInventory();
 }
 
-// Get the image bytes so we can cut out the background: straight from the site if it allows it,
+// Download the photo so it is stored on our server: straight from the site if it allows it,
 // otherwise through our server. Returns null if neither works (we then link the photo instead).
 async function loadRemoteImage(url) {
   try {
@@ -324,7 +324,7 @@ async function usePhotoFromWeb(id, url) {
   if (blob) return processPhoto(id, blob);
   const { product } = await api("/api/admin/products/" + id, { method: "PATCH", body: JSON.stringify({ image_url: url }) });
   updateProduct(product);
-  toast("Photo linked (couldn't download it to cut out the background)");
+  toast("Photo linked from its website (it couldn't be downloaded here)");
 }
 
 async function saveDraft() {
