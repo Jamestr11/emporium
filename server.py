@@ -1,7 +1,7 @@
 """The Emporium — school store pickup ordering + staff inventory.
 
 Zero dependencies: runs on the Python 3.9+ standard library.
-    ADMIN_PASSWORD=yourpassword python3 server.py
+    python3 server.py
 Then open http://localhost:8000 (store) and http://localhost:8000/admin (staff).
 """
 import hashlib
@@ -30,8 +30,9 @@ MAX_MODEL_BYTES = 30 * 1024 * 1024
 MODEL_TYPES = {"model/gltf-binary": ".glb", "application/octet-stream": ".glb"}
 UPLOAD_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif", "glb": "model/gltf-binary"}
 PORT = int(os.environ.get("PORT", "8000"))
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "emporium")
-SECRET = os.environ.get("SECRET_KEY") or hashlib.sha256(("emporium:" + ADMIN_PASSWORD).encode()).hexdigest()
+# Optional: a fixed staff password from the environment. When unset (the normal case), the
+# first person to open /admin creates the password, and only a salted hash is stored.
+ENV_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD") or None
 SESSION_HOURS = 12
 ORDER_STATUSES = ("new", "ready", "picked_up", "cancelled")
 
@@ -97,6 +98,10 @@ def init_db():
                 total_cents INTEGER NOT NULL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS order_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,8 +178,56 @@ def new_code():
     return "EM-" + "".join(secrets.choice(alphabet) for _ in range(5))
 
 
+def get_setting(key):
+    row = DB.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(key, value):
+    with db_lock, DB:
+        DB.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
+def secret_key():
+    env = os.environ.get("SECRET_KEY")
+    if env:
+        return env
+    key = get_setting("secret_key")
+    if not key:
+        with db_lock, DB:
+            DB.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('secret_key', ?)", (secrets.token_hex(32),))
+        key = get_setting("secret_key")
+    return key
+
+
+PBKDF2_ROUNDS = 200_000
+
+
+def hash_password(pw):
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), PBKDF2_ROUNDS).hex()
+    return f"pbkdf2${PBKDF2_ROUNDS}${salt}${digest}"
+
+
+def check_password(pw):
+    if ENV_ADMIN_PASSWORD:
+        return hmac.compare_digest(pw.encode(), ENV_ADMIN_PASSWORD.encode())
+    stored = get_setting("admin_pw_hash")
+    if not stored:
+        return False
+    _, rounds, salt, digest = stored.split("$")
+    test = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), int(rounds)).hex()
+    return hmac.compare_digest(test, digest)
+
+
+def needs_setup():
+    return not ENV_ADMIN_PASSWORD and not get_setting("admin_pw_hash")
+
+
 def sign(value):
-    return hmac.new(SECRET.encode(), value.encode(), hashlib.sha256).hexdigest()
+    # Keyed on the current password too, so changing the password signs everyone out.
+    key = secret_key() + (get_setting("admin_pw_hash") or ENV_ADMIN_PASSWORD or "")
+    return hmac.new(key.encode(), value.encode(), hashlib.sha256).hexdigest()
 
 
 def make_session():
@@ -425,14 +478,49 @@ def get_order(h, q, code):
     h.send_json(200, {"order": order_dict(row)})
 
 
+def session_cookie():
+    secure = "; Secure" if os.environ.get("SECURE_COOKIES") == "1" else ""
+    return {"Set-Cookie": f"em_session={make_session()}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_HOURS*3600}{secure}"}
+
+
+def valid_new_password(pw):
+    if not isinstance(pw, str) or len(pw) < 8:
+        raise ApiError(400, "Use at least 8 characters.")
+    if len(pw) > 200:
+        raise ApiError(400, "That password is too long.")
+    return pw
+
+
 def admin_login(h, q):
     body = h.read_body()
-    if not hmac.compare_digest(str(body.get("password", "")), ADMIN_PASSWORD):
+    if needs_setup():
+        raise ApiError(409, "No staff password yet — create one first.")
+    if not check_password(str(body.get("password", ""))):
         time.sleep(0.5)
         raise ApiError(401, "Wrong password.")
-    secure = "; Secure" if os.environ.get("SECURE_COOKIES") == "1" else ""
-    cookie = f"em_session={make_session()}; Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_HOURS*3600}{secure}"
-    h.send_json(200, {"ok": True}, {"Set-Cookie": cookie})
+    h.send_json(200, {"ok": True}, session_cookie())
+
+
+def admin_setup(h, q):
+    """First run only: whoever opens /admin first chooses the staff password."""
+    pw = valid_new_password(h.read_body().get("password"))
+    with db_lock, DB:
+        if ENV_ADMIN_PASSWORD or DB.execute("SELECT 1 FROM settings WHERE key='admin_pw_hash'").fetchone():
+            raise ApiError(409, "A staff password already exists.")
+        DB.execute("INSERT INTO settings (key, value) VALUES ('admin_pw_hash', ?)", (hash_password(pw),))
+    h.send_json(200, {"ok": True}, session_cookie())
+
+
+def admin_change_password(h, q):
+    h.require_admin()
+    if ENV_ADMIN_PASSWORD:
+        raise ApiError(409, "This password is set by the server's ADMIN_PASSWORD setting; change it there.")
+    body = h.read_body()
+    if not check_password(str(body.get("current", ""))):
+        time.sleep(0.5)
+        raise ApiError(403, "Current password is wrong.")
+    set_setting("admin_pw_hash", hash_password(valid_new_password(body.get("new"))))
+    h.send_json(200, {"ok": True}, session_cookie())  # other devices get signed out
 
 
 def admin_logout(h, q):
@@ -440,7 +528,7 @@ def admin_logout(h, q):
 
 
 def admin_me(h, q):
-    h.send_json(200, {"signed_in": h.is_admin()})
+    h.send_json(200, {"signed_in": h.is_admin(), "needs_setup": needs_setup()})
 
 
 def admin_products(h, q):
@@ -587,6 +675,8 @@ ROUTES = [
     (r"/api/admin/login", "POST", admin_login),
     (r"/api/admin/logout", "POST", admin_logout),
     (r"/api/admin/me", "GET", admin_me),
+    (r"/api/admin/setup", "POST", admin_setup),
+    (r"/api/admin/password", "POST", admin_change_password),
     (r"/api/admin/products", "GET", admin_products),
     (r"/api/admin/products", "POST", admin_create_product),
     (r"/api/admin/products/(\d+)", "PATCH", admin_update_product),
@@ -600,8 +690,8 @@ ROUTES = [
 
 if __name__ == "__main__":
     init_db()
-    if "ADMIN_PASSWORD" not in os.environ:
-        print("WARNING: ADMIN_PASSWORD not set — staff password is 'emporium'. Set it before going live.")
+    if needs_setup():
+        print("No staff password yet: open /admin to create one.")
     class Server(ThreadingHTTPServer):
         request_queue_size = 128  # default is 5; a lunchtime rush needs more room
         daemon_threads = True

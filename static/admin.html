@@ -63,6 +63,7 @@
       <a class="logo" href="/admin"><b>The Emporium</b><span>Staff</span></a>
       <div class="spacer"></div>
       <a class="btn small hide-sm" href="/" target="_blank">View store</a>
+      <button class="btn small" id="pwBtn" hidden>Password</button>
       <button class="btn small" id="logout" hidden>Sign out</button>
     </div>
   </header>
@@ -116,6 +117,20 @@
       </div>
     </form>
   </dialog>
+  <dialog id="pwDialog">
+    <form id="pwForm">
+      <h2 style="margin-bottom:12px">Change staff password</h2>
+      <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label>New password</label><input name="new" type="password" required minlength="8" autocomplete="new-password"></div>
+      <div class="field"><label>New password again</label><input name="new2" type="password" required minlength="8" autocomplete="new-password"></div>
+      <p class="hint">Everyone else signed in will be signed out.</p>
+      <p class="error" id="pwError"></p>
+      <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
+        <button type="button" class="btn" id="cancelPw">Cancel</button>
+        <button class="btn primary">Change password</button>
+      </div>
+    </form>
+  </dialog>
   <datalist id="catList"></datalist>
   <div class="toast" id="toast"></div>
 
@@ -139,7 +154,7 @@ async function api(path, opts = {}) {
 }
 
 function showLogin() {
-  $("#logout").hidden = true;
+  $("#logout").hidden = true; $("#pwBtn").hidden = true;
   $("#app").innerHTML = `<form class="panel login" id="loginForm">
     <h2>Staff sign in</h2>
     <div class="field"><label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password"></div>
@@ -149,10 +164,24 @@ function showLogin() {
   $("#pw").focus();
 }
 
+function showSetup() {
+  $("#logout").hidden = true; $("#pwBtn").hidden = true;
+  $("#app").innerHTML = `<form class="panel login" id="setupForm">
+    <h2>Welcome to the Emporium</h2>
+    <p class="hint" style="margin-top:4px">Create the staff password. Everyone who runs the store will use it to sign in here.</p>
+    <div class="field"><label for="newpw">New staff password</label><input id="newpw" type="password" required minlength="8" autocomplete="new-password"></div>
+    <div class="field"><label for="newpw2">Type it again</label><input id="newpw2" type="password" required minlength="8" autocomplete="new-password"></div>
+    <p class="error" id="setupError"></p>
+    <button class="btn primary block">Create password</button>
+  </form>`;
+  $("#newpw").focus();
+}
+
 async function boot() {
-  const { signed_in } = await api("/api/admin/me");
+  const { signed_in, needs_setup } = await api("/api/admin/me");
+  if (needs_setup) return showSetup();
   if (!signed_in) return showLogin();
-  $("#logout").hidden = false;
+  $("#logout").hidden = false; $("#pwBtn").hidden = false;
   renderShell();
   await Promise.all([loadOrders(), loadProducts()]);
 }
@@ -406,6 +435,8 @@ document.addEventListener("click", async e => {
       await api("/api/admin/products/" + f.id.value, { method: "DELETE" });
       $("#editDialog").close(); toast("Deleted"); loadProducts();
     }
+    else if (b.id === "pwBtn") { $("#pwForm").reset(); $("#pwError").textContent = ""; $("#pwDialog").showModal(); }
+    else if (b.id === "cancelPw") $("#pwDialog").close();
     else if (b.id === "logout") { await api("/api/admin/logout", { method: "POST" }); showLogin(); }
   } catch (ex) { toast(ex.message); loadProducts(); }
 });
@@ -419,7 +450,17 @@ document.addEventListener("input", e => {
 
 document.addEventListener("submit", async e => {
   const f = e.target, fid = f.getAttribute("id");  // f.id is shadowed by the hidden "id" input on editForm
-  if (fid === "loginForm") {
+  if (fid === "setupForm") {
+    e.preventDefault();
+    if ($("#newpw").value !== $("#newpw2").value) { $("#setupError").textContent = "Those don't match."; return; }
+    try { await api("/api/admin/setup", { method: "POST", body: JSON.stringify({ password: $("#newpw").value }) }); toast("Password created"); boot(); }
+    catch (ex) { $("#setupError").textContent = ex.message; }
+  } else if (fid === "pwForm") {
+    e.preventDefault();
+    if (f.new.value !== f.new2.value) { $("#pwError").textContent = "The new passwords don't match."; return; }
+    try { await api("/api/admin/password", { method: "POST", body: JSON.stringify({ current: f.current.value, new: f.new.value }) }); $("#pwDialog").close(); toast("Password changed"); }
+    catch (ex) { $("#pwError").textContent = ex.message; }
+  } else if (fid === "loginForm") {
     e.preventDefault();
     try { await api("/api/admin/login", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) }); boot(); }
     catch (ex) { $("#loginError").textContent = ex.message; }

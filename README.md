@@ -19,31 +19,53 @@ Every item shows as a little 3D object on the store: it floats on a stand with a
 
 ```bash
 cd ~/emporium
-ADMIN_PASSWORD=pick-a-password python3 server.py
+python3 server.py
 ```
 
-Open http://localhost:8000 (store) and http://localhost:8000/admin (staff).
+Open http://localhost:8000 (store) and http://localhost:8000/admin (staff). The first time you open the staff page, it asks you to **create the staff password**. Only a salted hash of it is stored, never the password itself. Change it any time with the **Password** button; that signs everyone else out.
 
 ## Products
 
 On first start, if the database is empty, items are loaded from `products.json`. After that, add and edit items on the staff page — the database (`emporium.db`) is the source of truth.
 
-## Put it online
+## Put it online (PythonAnywhere, free)
 
-Any host that runs Python and keeps a disk works (Render, Railway, Fly.io, a school server). On Render:
+The live site runs on [PythonAnywhere](https://www.pythonanywhere.com) through `wsgi.py`. Code lives on GitHub; data (orders, inventory, photos) lives in a separate folder on PythonAnywhere so updating the code never touches it.
 
-1. Push this folder to a GitHub repo.
-2. New **Web Service** → pick the repo. Start command: `python3 server.py`.
-3. Environment variables: `ADMIN_PASSWORD` (staff password), `SECRET_KEY` (any long random string), `SECURE_COOKIES=1`.
-4. Add a **persistent disk** mounted at `/data` and set `DB_PATH=/data/emporium.db` — without it, orders, inventory, photos and 3D models are wiped on every redeploy. (Photos go in an `uploads` folder next to the database.)
+**First-time setup**
+1. In a PythonAnywhere **Bash console**:
+   ```bash
+   git clone https://github.com/<you>/emporium.git ~/emporium
+   mkdir -p ~/emporium-data
+   ```
+2. **Web** tab → *Add a new web app* → *Manual configuration* → newest Python 3.
+3. Click the **WSGI configuration file** link, replace everything in it with:
+   ```python
+   import os, sys
+   HOME = os.path.expanduser("~")
+   os.environ["DB_PATH"] = HOME + "/emporium-data/emporium.db"
+   os.environ["SECURE_COOKIES"] = "1"
+   sys.path.insert(0, HOME + "/emporium")
+   from wsgi import application
+   ```
+4. Same page: turn on **Force HTTPS**, then press **Reload**.
+5. Open `https://<you>.pythonanywhere.com/admin` right away and create the staff password.
 
-Vercel/Netlify won't work as-is: they don't keep a database file between requests.
+**Updating after a code change:** push to GitHub, then in a PythonAnywhere Bash console run `cd ~/emporium && git pull` and press **Reload** on the Web tab.
+
+**Keep it alive:** free sites pause after 3 months unless you log in and press *Run until 3 months from today* on the Web tab. PythonAnywhere emails a reminder.
+
+**Backups:** download `~/emporium-data/emporium.db` (and the `uploads` folder beside it) from the **Files** tab now and then.
+
+## Other hosts
+
+Anything that runs Python and keeps a disk works (Railway, Render, Fly.io, a school server): run `python3 server.py`, and point `DB_PATH` at the persistent disk. Vercel/Netlify/GitHub Pages won't work as-is — they can't keep a database.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ADMIN_PASSWORD` | `emporium` | Staff sign-in password — **change it** |
-| `SECRET_KEY` | derived from password | Signs staff login sessions |
-| `PORT` | `8000` | Port to listen on |
 | `DB_PATH` | `./emporium.db` | Where orders and inventory are stored |
-| `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
 | `UPLOAD_DIR` | `uploads/` next to the database | Where photos and 3D models are stored |
+| `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
+| `PORT` | `8000` | Port to listen on (`server.py` only) |
+| `ADMIN_PASSWORD` | unset | Optional: fix the staff password from the server instead of creating it on the staff page |
+| `SECRET_KEY` | generated and stored in the database | Optional: signs staff sign-in sessions |
