@@ -103,16 +103,15 @@ function renderGrid() {
   if (!list.length) { $("#grid").innerHTML = `<p class="empty">No matches.</p>`; return; }
   $("#grid").innerHTML = list.map(p => {
     const qty = cart[p.id] || 0, out = p.stock <= 0;
-    // Cut-outs (transparent PNG/WebP) float on a stand; regular photos tilt as a framed tile.
-    const kind = !p.image_url ? "letter" : /\.(png|webp)$/i.test(p.image_url) ? "cutout" : "photo";
-    const img = p.image_url ? `<img class="obj" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" draggable="false">`
+    // Every product sits on a white tile that floats and tilts; no photo → a lettered tile.
+    const img = p.image_url ? `<div class="obj tile"><img src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" draggable="false"></div>`
       : `<span class="obj letter">${esc(p.name.trim()[0] || "?")}</span>`;
     const ctrl = out ? `<button class="btn small" disabled>Sold out</button>`
       : qty ? `<div class="stepper"><button data-dec="${p.id}" aria-label="Remove one">−</button><span>${qty}</span><button data-inc="${p.id}" aria-label="Add one">+</button></div>`
       : `<button class="btn small primary" data-inc="${p.id}">Add</button>`;
     return `<article class="card ${out ? "out" : ""}">
-      <div class="stage ${kind}">
-        <div class="floor"></div><div class="shadow"></div>${img}
+      <div class="stage">
+        <div class="shadow"></div>${img}
       </div>
       <div class="body">
         <span class="cat">${esc(p.category)}</span>

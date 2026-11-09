@@ -9,12 +9,12 @@ Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install 
 
 ## Adding items
 
-- **Add by name (easiest):** on the staff page → Inventory, type the product (e.g. "JBL Go 4 speaker black") or paste a link and press **Find it**. Claude searches the web and drafts the listing — name, short description, category, the usual retail price, and a few product photos. Pick the best photo, set your price and stock, and press **Add to store**. The photo's background is cut out automatically so the item floats on the store page.
+- **Add by name (easiest):** on the staff page → Inventory, type the product (e.g. "JBL Go 4 speaker black") or paste a link and press **Find it**. Claude searches the web and drafts the listing — name, short description, category, the usual retail price, and a few product photos. Pick the best photo, set your price and stock, and press **Add to store**.
   Needs an Anthropic API key: staff page → **Settings** → paste it (get one at console.anthropic.com and add a little credit). Each lookup costs roughly 10–30¢. The key is stored on the server and never shown again; `ANTHROPIC_API_KEY` in the environment works too.
-- **Photos for existing items:** Edit → **✨ Find photo for me** (uses the same lookup), or **Search images myself** → right-click a picture → Copy image → **Paste photo**. **Take or choose photo** uploads from the phone camera or files.
+- **Photos for existing items:** Edit → **✨ Find photo for me** (uses the same lookup), or **Search images myself** → right-click a picture → Copy image → **Paste photo**. **Take or choose photo** uploads from the phone camera or files. Product shots on a white background look best.
 - **Add an item yourself / Add many at once** still work without any key.
 
-Every item shows as a little 3D object on the store: it floats on a stand with a shadow and tilts toward your mouse. The first background cut-out downloads the cut-out tool (~40 MB, cached after that). Untick "Cut out photo backgrounds automatically" to keep photos as-is.
+Every item shows on a white photo tile that floats gently and tilts toward the mouse. The starting photos for the original 30 items live in `static/products/` and load automatically on a fresh install.
 
 ## Run it on your Mac
 

@@ -3,133 +3,155 @@
     "name": "Sour Strips Wild Cherry",
     "price": 3,
     "stock": 1,
-    "category": "Candy"
+    "category": "Candy",
+    "image_url": "/products/sour-strips-wild-cherry.jpg"
   },
   {
     "name": "Sour Strips Strawberry",
     "price": 3,
     "stock": 2,
-    "category": "Candy"
+    "category": "Candy",
+    "image_url": "/products/sour-strips-strawberry.jpg"
   },
   {
     "name": "Sour Drops Watermelon",
     "price": 6,
     "stock": 1,
-    "category": "Candy"
+    "category": "Candy",
+    "image_url": "/products/sour-drops-watermelon.jpg"
   },
   {
     "name": "Sour Drops Peach",
     "price": 6,
     "stock": 1,
-    "category": "Candy"
+    "category": "Candy",
+    "image_url": "/products/sour-drops-peach.jpg"
   },
   {
     "name": "theFube fidget cube",
     "price": 12,
     "stock": 1,
-    "category": "Fidgets & Toys"
+    "category": "Fidgets & Toys",
+    "image_url": "/products/thefube-fidget-cube.jpg"
   },
   {
     "name": "Mini fidget toy",
     "price": 7,
     "stock": 1,
-    "category": "Fidgets & Toys"
+    "category": "Fidgets & Toys",
+    "image_url": "/products/mini-fidget-toy.jpg"
   },
   {
     "name": "NeeDoh Gumdrop",
     "price": 5,
     "stock": 1,
-    "category": "Fidgets & Toys"
+    "category": "Fidgets & Toys",
+    "image_url": "/products/needoh-gumdrop.jpg"
   },
   {
     "name": "Gummy bear squishy (NeeDoh dupe)",
     "price": 8,
     "stock": 1,
-    "category": "Fidgets & Toys"
+    "category": "Fidgets & Toys",
+    "image_url": "/products/gummy-bear-squishy-needoh-dupe.jpg"
   },
   {
     "name": "Foam baseball",
     "price": 1,
     "stock": 1,
-    "category": "Fidgets & Toys"
+    "category": "Fidgets & Toys",
+    "image_url": "/products/foam-baseball.jpg"
   },
   {
     "name": "How to Make the Best Coffee at Home (book)",
     "price": 22,
     "stock": 1,
-    "category": "Books"
+    "category": "Books",
+    "image_url": "/products/how-to-make-the-best-coffee-at-home-book.jpg"
   },
   {
     "name": "The Master Guide to Drawing Anime (book)",
     "price": 21,
     "stock": 1,
-    "category": "Books"
+    "category": "Books",
+    "image_url": "/products/the-master-guide-to-drawing-anime-book.jpg"
   },
   {
     "name": "100 Cookies (book)",
     "price": 30,
     "stock": 1,
-    "category": "Books"
+    "category": "Books",
+    "image_url": "/products/100-cookies-book.jpg"
   },
   {
     "name": "Sketch book",
     "price": 9,
     "stock": 1,
-    "category": "Art & Crafts"
+    "category": "Art & Crafts",
+    "image_url": "/products/sketch-book.jpg"
   },
   {
     "name": "Clay bead bracelet kit",
     "price": 12,
     "stock": 1,
-    "category": "Art & Crafts"
+    "category": "Art & Crafts",
+    "image_url": "/products/clay-bead-bracelet-kit.jpg"
   },
   {
     "name": "Owala FreeSip pink",
     "price": 29,
     "stock": 1,
-    "category": "Drinkware"
+    "category": "Drinkware",
+    "image_url": "/products/owala-freesip-pink.jpg"
   },
   {
     "name": "Owala FreeSip white",
     "price": 29,
     "stock": 1,
-    "category": "Drinkware"
+    "category": "Drinkware",
+    "image_url": "/products/owala-freesip-white.jpg"
   },
   {
     "name": "Google Fitbit Air",
     "price": 99,
     "stock": 1,
-    "category": "Tech"
+    "category": "Tech",
+    "image_url": "/products/google-fitbit-air.jpg"
   },
   {
     "name": "JBL GO 4 speaker",
     "price": 49,
     "stock": 1,
-    "category": "Tech"
+    "category": "Tech",
+    "image_url": "/products/jbl-go-4-speaker.jpg"
   },
   {
     "name": "VEGER power bank",
     "price": 23,
     "stock": 1,
-    "category": "Tech"
+    "category": "Tech",
+    "image_url": "/products/veger-power-bank.jpg"
   },
   {
     "name": "AirPods Pro (used)",
     "price": 160,
     "stock": 1,
-    "category": "Tech"
+    "category": "Tech",
+    "image_url": "/products/airpods-pro-used.jpg"
   },
   {
     "name": "Supreme Mini Mics (Set of 2, phone plug-in)",
     "price": 48,
     "stock": 0,
-    "category": "Tech"
+    "category": "Tech",
+    "image_url": "/products/supreme-mini-mics-set-of-2-phone-plug-in.jpg"
   },
   {
     "name": "Jellycat macaron plush",
     "price": 25,
     "stock": 1,
-    "category": "Plush & Collectibles"
+    "category": "Plush & Collectibles",
+    "image_url": "/products/jellycat-macaron-plush.jpg"
   },
   {
     "name": "Smiski house display",
@@ -141,42 +163,49 @@
     "name": "Emotional Support Pals plush",
     "price": 17,
     "stock": 1,
-    "category": "Plush & Collectibles"
+    "category": "Plush & Collectibles",
+    "image_url": "/products/emotional-support-pals-plush.jpg"
   },
   {
     "name": "Parfums de Marly Feminine Discovery Selection (3x5ml)",
     "price": 75,
     "stock": 1,
-    "category": "Fragrance"
+    "category": "Fragrance",
+    "image_url": "/products/parfums-de-marly-feminine-discovery-selection-3x5m.jpg"
   },
   {
     "name": "Parfums de Marly Feminine Discovery Set (7x1.5ml)",
     "price": 55,
     "stock": 1,
-    "category": "Fragrance"
+    "category": "Fragrance",
+    "image_url": "/products/parfums-de-marly-feminine-discovery-set-7x1-5ml.jpg"
   },
   {
     "name": "Parfums de Marly Masculine Discovery Set (7x1.5ml)",
     "price": 55,
     "stock": 1,
-    "category": "Fragrance"
+    "category": "Fragrance",
+    "image_url": "/products/parfums-de-marly-masculine-discovery-set-7x1-5ml.jpg"
   },
   {
     "name": "World Cup Trionda mini ball",
     "price": 18,
     "stock": 1,
-    "category": "Sports"
+    "category": "Sports",
+    "image_url": "/products/world-cup-trionda-mini-ball.jpg"
   },
   {
     "name": "Ray-Ban Meta Wayfarer Gen 2 (matte black, Transitions)",
     "price": 243,
     "stock": 1,
-    "category": "Eyewear"
+    "category": "Eyewear",
+    "image_url": "/products/ray-ban-meta-wayfarer-gen-2-matte-black-transition.jpg"
   },
   {
     "name": "Ray-Ban Round Metal (gold, pink mirror)",
     "price": 218,
     "stock": 1,
-    "category": "Eyewear"
+    "category": "Eyewear",
+    "image_url": "/products/ray-ban-round-metal-gold-pink-mirror.jpg"
   }
 ]
