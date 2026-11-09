@@ -7,6 +7,14 @@ Pickup-order website for the school store.
 
 No dependencies — just Python 3.9+.
 
+## Photos and 3D
+
+Every item shows as a little 3D object on the store: it floats on a stand with a shadow and tilts toward your mouse.
+
+- **Photos:** on the staff page → Inventory, tap an item's **+ Photo** square (on a phone it offers the camera). The background is cut out automatically in the browser, so the item floats on its own. The first cut-out downloads the cut-out tool (~40 MB, cached after that) and takes 10–30 seconds. Untick "Cut out photo backgrounds automatically" to upload photos as-is; they then show as a tilted framed photo.
+  Tip: shoot the item on a plain table against a plain wall, filling most of the frame.
+- **Spinnable 3D models (optional):** scan the item with a free app such as **Polycam** or **KIRI Engine**, export as **GLB**, then on the staff page tap **Edit → Upload .glb file**. Shoppers see a "↻ 3D" button and can drag to spin the item all the way around (and view it in AR on phones). Max 30 MB.
+
 ## Run it on your Mac
 
 ```bash
@@ -27,7 +35,7 @@ Any host that runs Python and keeps a disk works (Render, Railway, Fly.io, a sch
 1. Push this folder to a GitHub repo.
 2. New **Web Service** → pick the repo. Start command: `python3 server.py`.
 3. Environment variables: `ADMIN_PASSWORD` (staff password), `SECRET_KEY` (any long random string), `SECURE_COOKIES=1`.
-4. Add a **persistent disk** mounted at `/data` and set `DB_PATH=/data/emporium.db` — without it, orders and inventory are wiped on every redeploy.
+4. Add a **persistent disk** mounted at `/data` and set `DB_PATH=/data/emporium.db` — without it, orders, inventory, photos and 3D models are wiped on every redeploy. (Photos go in an `uploads` folder next to the database.)
 
 Vercel/Netlify won't work as-is: they don't keep a database file between requests.
 
@@ -38,3 +46,4 @@ Vercel/Netlify won't work as-is: they don't keep a database file between request
 | `PORT` | `8000` | Port to listen on |
 | `DB_PATH` | `./emporium.db` | Where orders and inventory are stored |
 | `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
+| `UPLOAD_DIR` | `uploads/` next to the database | Where photos and 3D models are stored |

@@ -1,3 +1,4 @@
 emporium.db*
 __pycache__/
 .DS_Store
+uploads/

@@ -33,6 +33,22 @@
     .switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
     dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); width: min(520px, calc(100% - 32px)); padding: 20px; }
     dialog::backdrop { background: rgba(0,0,0,.4); }
+    .thumb {
+      width: 48px; height: 48px; border-radius: 10px; background: var(--surface-2); flex: none;
+      display: grid; place-items: center; overflow: hidden; color: var(--muted); font-family: var(--display); font-size: 20px;
+      border: 1px solid var(--line); cursor: pointer; padding: 0; position: relative;
+    }
+    .thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb.add { border-style: dashed; font-family: var(--body); font-size: 11px; font-weight: 600; line-height: 1.1; text-align: center; }
+    .thumb.busy::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+    .thumb.lg { width: 112px; height: 112px; cursor: default; font-size: 13px; }
+    .photo-edit { display: flex; gap: 14px; align-items: center; }
+    .thumb img { object-fit: contain; }
+    .thumb { background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 12px 12px; }
+    .thumb.add { background: var(--surface-2); }
+    .tag3d { position: absolute; right: 2px; bottom: 2px; background: var(--brand); color: var(--brand-ink); font: 700 9px var(--body); padding: 1px 4px; border-radius: 4px; }
+    .item-cell { display: flex; gap: 12px; align-items: center; }
+    .photo-progress { font-size: 13px; color: var(--muted); }
     @media (max-width: 640px) {
       .inv thead { display: none; }
       .inv tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -64,7 +80,33 @@
       </div>
       <div class="field"><label>Category</label><input name="category" list="catList" maxlength="60" placeholder="Snacks, Drinks, Merch…"></div>
       <div class="field"><label>Description <span class="hint">(optional)</span></label><textarea name="description" maxlength="500"></textarea></div>
-      <div class="field"><label>Image link <span class="hint">(optional, https://…)</span></label><input name="image_url" type="url" maxlength="1000"></div>
+      <div class="field">
+        <label>Photo</label>
+        <div class="photo-edit">
+          <div class="thumb lg" id="editThumb"></div>
+          <div style="display:grid;gap:8px">
+            <button type="button" class="btn small" data-photo-edit>Take or choose photo</button>
+            <button type="button" class="btn small danger" id="removePhoto">Remove photo</button>
+          </div>
+        </div>
+        <input name="image_url" type="hidden">
+      </div>
+      <div class="field">
+        <label>3D model <span class="hint">(optional — lets shoppers spin the item)</span></label>
+        <p class="hint" id="modelStatus" style="margin:0"></p>
+        <div class="toolbar" style="margin:0">
+          <button type="button" class="btn small" data-model-edit>Upload .glb file</button>
+          <button type="button" class="btn small danger" id="removeModel">Remove 3D model</button>
+        </div>
+        <details><summary class="hint" style="cursor:pointer">How do I make one?</summary>
+          <ol class="hint" style="margin:6px 0 0;padding-left:18px">
+            <li>Install a free scanning app: <b>Polycam</b> or <b>KIRI Engine</b> (iPhone or Android).</li>
+            <li>Put the item on a plain table with good light and walk slowly around it while the app scans (photo mode works best).</li>
+            <li>Crop away the table in the app, then export/share as <b>GLB</b>.</li>
+            <li>Tap “Upload .glb file” here and pick it.</li>
+          </ol>
+        </details>
+      </div>
       <label class="switch"><input type="checkbox" name="active"> Show in store</label>
       <p class="error" id="editError"></p>
       <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
@@ -171,10 +213,7 @@ function renderInventory() {
           <div class="field"><label>How many in stock</label><input name="stock" type="number" step="1" min="0" value="0" required></div>
           <div class="field"><label>Category</label><input name="category" list="catList" maxlength="60" placeholder="Snacks"></div>
         </div>
-        <details style="margin-bottom:12px"><summary class="hint" style="cursor:pointer">More (description, image)</summary>
-          <div class="field" style="margin-top:10px"><label>Description</label><input name="description" maxlength="500"></div>
-          <div class="field"><label>Image link (https://…)</label><input name="image_url" type="url" maxlength="1000"></div>
-        </details>
+        <div class="field"><label>Description <span class="hint">(optional)</span></label><input name="description" maxlength="500"></div>
         <p class="error" id="addError"></p>
         <button class="btn primary">Add item</button>
       </form>
@@ -189,11 +228,16 @@ function renderInventory() {
       </form>
     </section>
     <section class="panel">
-      <div class="toolbar"><h2 style="margin:0;flex:1">Inventory · ${products.length}</h2></div>
+      <div class="toolbar"><h2 style="margin:0;flex:1">Inventory · ${products.length}</h2>
+        <span class="photo-progress">${products.filter(p => p.image_url).length} of ${products.length} have photos · ${products.filter(p => p.model_url).length} have 3D · tap a square to add a photo</span></div>
+      <label class="switch" style="margin-bottom:12px"><input type="checkbox" id="cutoutToggle" ${wantCutout() ? "checked" : ""}> Cut out photo backgrounds automatically (makes items float in 3D on the store)</label>
       <div class="toolbar"><input class="search" id="invSearch" type="search" placeholder="Search items…" value="${esc(invQuery)}"></div>
       ${list.length ? `<table class="inv"><thead><tr><th>Item</th><th class="c-cat">Category</th><th>Price</th><th>Stock</th><th></th></tr></thead><tbody>
         ${list.map(p => `<tr class="${p.active ? "" : "hidden-item"}">
-          <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="hint">(hidden)</span>`}</td>
+          <td><div class="item-cell">
+            <button class="thumb ${p.image_url ? "" : "add"}" data-photo="${p.id}" title="${p.image_url ? "Change photo" : "Add photo"}" aria-label="${p.image_url ? "Change" : "Add"} photo for ${esc(p.name)}">${p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : "+ Photo"}${p.model_url ? `<span class="tag3d">3D</span>` : ""}</button>
+            <div><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="hint">(hidden)</span>`}</div>
+          </div></td>
           <td class="c-cat">${esc(p.category)}</td>
           <td class="num">${money(p.price_cents)}</td>
           <td class="num"><div class="stepper"><button data-stock="${p.id}" data-d="-1" aria-label="One less">−</button><span>${p.stock}</span><button data-stock="${p.id}" data-d="1" aria-label="One more">+</button></div></td>
@@ -208,8 +252,120 @@ function openEdit(p) {
   f.stock.value = p.stock; f.category.value = p.category; f.description.value = p.description;
   f.image_url.value = p.image_url; f.active.checked = p.active;
   $("#editError").textContent = "";
+  renderEditThumb(p);
   $("#editDialog").showModal();
 }
+function renderEditThumb(p) {
+  $("#editThumb").innerHTML = p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : "No photo";
+  $("#removePhoto").hidden = !p.image_url;
+  $("#modelStatus").innerHTML = p.model_url ? `✓ 3D model added — shoppers can spin it. <a href="${esc(p.model_url)}" download>Download</a>` : "No 3D model yet.";
+  $("#removeModel").hidden = !p.model_url;
+}
+function updateProduct(product) {
+  products[products.findIndex(p => p.id == product.id)] = product;
+  renderInventory();
+  if ($("#editDialog").open && $("#editForm").id.value == product.id) { $("#editForm").image_url.value = product.image_url; renderEditThumb(product); }
+}
+
+// ---- photos ----
+const picker = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", hidden: true });
+const modelPicker = Object.assign(document.createElement("input"), { type: "file", accept: ".glb,model/gltf-binary", hidden: true });
+document.body.append(picker, modelPicker);
+let photoTarget = null, modelTarget = null;
+function pickPhoto(id) { photoTarget = id; picker.value = ""; picker.click(); }
+function pickModel(id) { modelTarget = id; modelPicker.value = ""; modelPicker.click(); }
+const wantCutout = () => { try { return localStorage.getItem("em_cutout") !== "0"; } catch { return true; } };
+
+// Background removal runs entirely in this browser (no photo is sent anywhere but our server).
+// The model (~40 MB) downloads the first time, then the browser caches it.
+const CUTOUT_LIB = "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/+esm";
+async function cutout(file, onProgress) {
+  const { removeBackground } = await import(CUTOUT_LIB);
+  return await removeBackground(file, {
+    model: "isnet_quint8",
+    output: { format: "image/png" },
+    progress: (key, cur, total) => { if (key.startsWith("fetch") && total) onProgress(Math.round(cur / total * 100)); },
+  });
+}
+
+function canvasFrom(bmp, w, h) {
+  const c = Object.assign(document.createElement("canvas"), { width: w, height: h });
+  return [c, c.getContext("2d")];
+}
+const toBlob = (c, type, q) => new Promise(r => c.toBlob(r, type, q));
+
+// Crop a cut-out to its visible pixels (plus a little room), cap at 900px, keep transparency.
+// Returns null when the cut-out looks wrong (nothing kept, or nothing removed).
+async function tidyCutout(png) {
+  const bmp = await createImageBitmap(png);
+  const [c, g] = canvasFrom(bmp, bmp.width, bmp.height);
+  g.drawImage(bmp, 0, 0);
+  const { data, width, height } = g.getImageData(0, 0, c.width, c.height);
+  let x0 = width, y0 = height, x1 = -1, y1 = -1, solid = 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    if (data[(y * width + x) * 4 + 3] > 24) { solid++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  const share = solid / (width * height);
+  if (x1 < 0 || share < 0.02 || share > 0.97) return null;
+  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.04);
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(width - 1, x1 + pad); y1 = Math.min(height - 1, y1 + pad);
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, scale = Math.min(1, 900 / Math.max(w, h));
+  const [out, og] = canvasFrom(null, Math.round(w * scale), Math.round(h * scale));
+  og.drawImage(c, x0, y0, w, h, 0, 0, out.width, out.height);
+  const webp = await toBlob(out, "image/webp", 0.88);
+  return webp && webp.type === "image/webp" ? webp : await toBlob(out, "image/png");
+}
+
+// Plain photo: at most 1200px on the long side, JPEG.
+async function shrink(file) {
+  const bmp = await createImageBitmap(file).catch(() => null);
+  if (!bmp) return file;
+  const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+  const [c, g] = canvasFrom(bmp, Math.round(bmp.width * scale), Math.round(bmp.height * scale));
+  g.drawImage(bmp, 0, 0, c.width, c.height);
+  return (await toBlob(c, "image/jpeg", 0.85)) || file;
+}
+
+async function upload(id, kind, blob, type) {
+  const res = await fetch(`/api/admin/products/${id}/${kind}`, { method: "POST", headers: { "Content-Type": type }, body: blob, credentials: "same-origin" });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { showLogin(); throw new Error("Please sign in."); }
+  if (!res.ok) throw new Error(data.error || "Upload failed.");
+  return data.product;
+}
+
+picker.addEventListener("change", async () => {
+  const file = picker.files[0], id = photoTarget;
+  if (!file || !id) return;
+  const thumb = () => document.querySelector(`[data-photo="${id}"]`);
+  thumb()?.classList.add("busy");
+  try {
+    let blob = null;
+    if (wantCutout()) {
+      toast("Cutting out the background…");
+      try {
+        const small = await shrink(file);   // smaller input = much faster cut-out
+        blob = await tidyCutout(await cutout(small, pct => toast(`Getting the cut-out tool ready… ${pct}%`)));
+        if (!blob) toast("Couldn't find the item in that photo — saved it as a normal photo.");
+      } catch (ex) {
+        console.warn("cut-out failed", ex);
+        toast("Couldn't cut out the background — saved it as a normal photo.");
+      }
+    }
+    if (!blob) blob = await shrink(file);
+    updateProduct(await upload(id, "image", blob, blob.type || file.type));
+    toast(blob.type === "image/jpeg" ? "Photo saved" : "Photo saved — background removed ✨");
+  } catch (ex) { toast(ex.message); thumb()?.classList.remove("busy"); }
+});
+
+modelPicker.addEventListener("change", async () => {
+  const file = modelPicker.files[0], id = modelTarget;
+  if (!file || !id) return;
+  if (!/\.glb$/i.test(file.name)) { toast("Pick a .glb file — export as GLB from your scanning app."); return; }
+  toast("Uploading 3D model…");
+  try { updateProduct(await upload(id, "model", file, "model/gltf-binary")); toast("3D model saved"); }
+  catch (ex) { toast(ex.message); }
+});
 
 document.addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
@@ -229,6 +385,20 @@ document.addEventListener("click", async e => {
       await api("/api/admin/products/" + p.id, { method: "PATCH", body: JSON.stringify({ stock }) });
     }
     else if (b.dataset.edit) openEdit(products.find(p => p.id == b.dataset.edit));
+    else if (b.dataset.photo) pickPhoto(b.dataset.photo);
+    else if ("photoEdit" in b.dataset) pickPhoto($("#editForm").id.value);
+    else if ("modelEdit" in b.dataset) pickModel($("#editForm").id.value);
+    else if (b.id === "removeModel") {
+      if (!confirm("Remove this item's 3D model?")) return;
+      const { product } = await api("/api/admin/products/" + $("#editForm").id.value, { method: "PATCH", body: JSON.stringify({ model_url: "" }) });
+      updateProduct(product); toast("3D model removed");
+    }
+    else if (b.id === "removePhoto") {
+      const id = $("#editForm").id.value;
+      const { product } = await api("/api/admin/products/" + id, { method: "PATCH", body: JSON.stringify({ image_url: "" }) });
+      products[products.findIndex(p => p.id == id)] = product;
+      $("#editForm").image_url.value = ""; renderEditThumb(product); renderInventory(); toast("Photo removed");
+    }
     else if (b.id === "cancelEdit") $("#editDialog").close();
     else if (b.id === "deleteItem") {
       const f = $("#editForm");
@@ -240,6 +410,9 @@ document.addEventListener("click", async e => {
   } catch (ex) { toast(ex.message); loadProducts(); }
 });
 
+document.addEventListener("change", e => {
+  if (e.target.id === "cutoutToggle") { try { localStorage.setItem("em_cutout", e.target.checked ? "1" : "0"); } catch {} }
+});
 document.addEventListener("input", e => {
   if (e.target.id === "invSearch") { invQuery = e.target.value; renderInventory(); const s = $("#invSearch"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 });

@@ -45,6 +45,12 @@
 
   <div class="toast" id="toast"></div>
 
+  <dialog id="spinDialog" class="spin-dialog" aria-label="3D view">
+    <div class="spin-head"><h2 id="spinTitle"></h2><button class="btn small" id="closeSpin">Close</button></div>
+    <div id="spinHolder" class="spin-holder"></div>
+    <p class="hint" style="text-align:center;margin:8px 0 0">Drag to spin · pinch or scroll to zoom</p>
+  </dialog>
+
 <script>
 const $ = s => document.querySelector(s);
 const money = c => "$" + (c / 100).toFixed(2);
@@ -103,12 +109,18 @@ function renderGrid() {
   if (!list.length) { $("#grid").innerHTML = `<p class="empty">No matches.</p>`; return; }
   $("#grid").innerHTML = list.map(p => {
     const qty = cart[p.id] || 0, out = p.stock <= 0;
-    const img = p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">` : esc(p.name.trim()[0] || "?");
+    // Cut-outs (transparent PNG/WebP) float on a stand; regular photos tilt as a framed tile.
+    const kind = !p.image_url ? "letter" : /\.(png|webp)$/i.test(p.image_url) ? "cutout" : "photo";
+    const img = p.image_url ? `<img class="obj" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy" draggable="false">`
+      : `<span class="obj letter">${esc(p.name.trim()[0] || "?")}</span>`;
+    const spin = p.model_url ? `<button class="spin-btn" data-spin="${p.id}" aria-label="Spin ${esc(p.name)} in 3D">↻ 3D</button>` : "";
     const ctrl = out ? `<button class="btn small" disabled>Sold out</button>`
       : qty ? `<div class="stepper"><button data-dec="${p.id}" aria-label="Remove one">−</button><span>${qty}</span><button data-inc="${p.id}" aria-label="Add one">+</button></div>`
       : `<button class="btn small primary" data-inc="${p.id}">Add</button>`;
     return `<article class="card ${out ? "out" : ""}">
-      <div class="img">${img}</div>
+      <div class="stage ${kind}" ${p.model_url ? `data-spin="${p.id}" role="button" tabindex="0" aria-label="Spin ${esc(p.name)} in 3D"` : ""}>
+        <div class="floor"></div><div class="shadow"></div>${img}${spin}
+      </div>
       <div class="body">
         <span class="cat">${esc(p.category)}</span>
         <h3>${esc(p.name)}</h3>
@@ -218,6 +230,50 @@ document.addEventListener("click", async e => {
   else if (t.id === "backToCart") { view = "cart"; renderDrawer(); }
 });
 $("#scrim").addEventListener("click", closeDrawer);
+
+// ---- 3D tilt: the item leans toward the pointer ----
+const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+document.addEventListener("pointermove", e => {
+  if (calm || e.pointerType === "touch") return;
+  const st = e.target.closest?.(".stage");
+  document.querySelectorAll(".stage.tilting").forEach(el => { if (el !== st) { el.classList.remove("tilting"); el.style.removeProperty("--rx"); el.style.removeProperty("--ry"); } });
+  if (!st) return;
+  const r = st.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5;
+  st.classList.add("tilting");
+  st.style.setProperty("--ry", (x * 28).toFixed(1) + "deg");
+  st.style.setProperty("--rx", (-y * 20).toFixed(1) + "deg");
+});
+
+// ---- spinnable 3D models ----
+const MODEL_VIEWER = "https://cdn.jsdelivr.net/npm/@google/model-viewer@4.0.0/dist/model-viewer.min.js";
+let viewerLoaded = null;
+function loadViewer() {
+  return viewerLoaded ??= new Promise((ok, fail) => {
+    const sc = Object.assign(document.createElement("script"), { type: "module", src: MODEL_VIEWER });
+    sc.onload = () => customElements.whenDefined("model-viewer").then(ok);
+    sc.onerror = () => { viewerLoaded = null; fail(new Error("Couldn't load the 3D viewer.")); };
+    document.head.append(sc);
+  });
+}
+async function openSpin(id) {
+  const p = products.find(p => p.id == id); if (!p?.model_url) return;
+  $("#spinTitle").textContent = p.name;
+  $("#spinHolder").innerHTML = `<p class="empty">Loading 3D…</p>`;
+  $("#spinDialog").showModal();
+  try {
+    await loadViewer();
+    $("#spinHolder").innerHTML = `<model-viewer src="${esc(p.model_url)}" ${p.image_url ? `poster="${esc(p.image_url)}"` : ""} alt="3D model of ${esc(p.name)}"
+      camera-controls auto-rotate auto-rotate-delay="0" rotation-per-second="25deg" interaction-prompt="none"
+      shadow-intensity="1" shadow-softness=".8" exposure="1.05" environment-image="neutral" touch-action="pan-y"
+      ar ar-modes="webxr scene-viewer quick-look"></model-viewer>`;
+  } catch (ex) { $("#spinHolder").innerHTML = `<p class="empty">${esc(ex.message)}</p>`; }
+}
+function closeSpin() { $("#spinDialog").close(); }
+$("#spinDialog").addEventListener("close", () => { $("#spinHolder").innerHTML = ""; });
+$("#spinDialog").addEventListener("click", e => { if (e.target.id === "spinDialog" || e.target.id === "closeSpin") closeSpin(); });
+document.addEventListener("click", e => { const s = e.target.closest("[data-spin]"); if (s) openSpin(s.dataset.spin); });
+document.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".stage[data-spin]")) { e.preventDefault(); openSpin(e.target.dataset.spin); } });
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 $("#search").addEventListener("input", e => { query = e.target.value; renderGrid(); });
 

@@ -21,23 +21,55 @@ from urllib.parse import urlparse, parse_qs
 ROOT = Path(__file__).parent
 STATIC = ROOT / "static"
 DB_PATH = os.environ.get("DB_PATH", str(ROOT / "emporium.db"))
+# Photos live next to the database so one persistent disk holds everything.
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR") or Path(DB_PATH).resolve().parent / "uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+MAX_MODEL_BYTES = 30 * 1024 * 1024
+MODEL_TYPES = {"model/gltf-binary": ".glb", "application/octet-stream": ".glb"}
+UPLOAD_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif", "glb": "model/gltf-binary"}
 PORT = int(os.environ.get("PORT", "8000"))
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "emporium")
 SECRET = os.environ.get("SECRET_KEY") or hashlib.sha256(("emporium:" + ADMIN_PASSWORD).encode()).hexdigest()
 SESSION_HOURS = 12
 ORDER_STATUSES = ("new", "ready", "picked_up", "cancelled")
 
+# Writes are serialized with db_lock so stock checks and decrements can't interleave.
 db_lock = threading.Lock()
 
 
 def connect():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")  # readers don't block the writer
     return conn
 
 
-DB = connect()
+class _ThreadDB:
+    """Each request thread gets its own SQLite connection (sharing one across threads breaks
+    when two requests overlap). Behaves like a connection: DB.execute(...), `with DB:`."""
+
+    _local = threading.local()
+
+    def _conn(self):
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._local.conn = connect()
+        return conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn(), name)
+
+    def __enter__(self):
+        return self._conn().__enter__()
+
+    def __exit__(self, *exc):
+        return self._conn().__exit__(*exc)
+
+
+DB = _ThreadDB()
 
 
 def init_db():
@@ -76,6 +108,9 @@ def init_db():
             );
             """
         )
+        cols = {r["name"] for r in DB.execute("PRAGMA table_info(products)")}
+        if "model_url" not in cols:
+            DB.execute("ALTER TABLE products ADD COLUMN model_url TEXT NOT NULL DEFAULT ''")
         count = DB.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         seed = ROOT / "products.json"
         if count == 0 and seed.exists():
@@ -106,6 +141,7 @@ def product_dict(row, admin=False):
         "price_cents": row["price_cents"],
         "stock": row["stock"],
         "image_url": row["image_url"],
+        "model_url": row["model_url"],
     }
     if admin:
         d["active"] = bool(row["active"])
@@ -194,6 +230,10 @@ def parse_product(body, partial=False):
         if stock < 0 or stock > 100_000:
             raise ApiError(400, "Stock is out of range.")
         out["stock"] = stock
+    if "model_url" in body:
+        if body.get("model_url"):
+            raise ApiError(400, "Upload 3D models with the 3D button.")
+        out["model_url"] = ""
     if "active" in body:
         out["active"] = 1 if body.get("active") else 0
     return out
@@ -253,6 +293,19 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(401, "Please sign in.")
 
     def serve_static(self, path):
+        if path.startswith("/uploads/"):
+            name = path[len("/uploads/"):]
+            target = UPLOAD_DIR / name
+            if re.fullmatch(r"[A-Za-z0-9_-]+\.(jpg|png|webp|gif|glb)", name) and target.is_file():
+                data = target.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", UPLOAD_MIME[name.rsplit(".", 1)[1]])
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            path = "/__missing__"
         if path in ("/", ""):
             path = "/index.html"
         elif path in ("/admin", "/admin/"):
@@ -418,17 +471,76 @@ def admin_update_product(h, q, pid):
     with db_lock, DB:
         if not DB.execute("SELECT 1 FROM products WHERE id=?", (pid,)).fetchone():
             raise ApiError(404, "Product not found.")
+        old = DB.execute("SELECT image_url, model_url FROM products WHERE id=?", (pid,)).fetchone()
         sets = ", ".join(f"{k}=?" for k in data)
         DB.execute(f"UPDATE products SET {sets} WHERE id=?", (*data.values(), pid))
+        for col in ("image_url", "model_url"):
+            if col in data and data[col] != old[col]:
+                remove_uploaded(old[col])
         row = DB.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
     h.send_json(200, {"product": product_dict(row, admin=True)})
+
+
+def remove_uploaded(url):
+    if url and url.startswith("/uploads/"):
+        try:
+            (UPLOAD_DIR / Path(url).name).unlink()
+        except OSError:
+            pass
 
 
 def admin_delete_product(h, q, pid):
     h.require_admin()
     with db_lock, DB:
+        row = DB.execute("SELECT image_url, model_url FROM products WHERE id=?", (pid,)).fetchone()
         DB.execute("DELETE FROM products WHERE id=?", (pid,))
+    if row:
+        remove_uploaded(row["image_url"])
+        remove_uploaded(row["model_url"])
     h.send_json(200, {"ok": True})
+
+
+def save_upload(h, pid, column, types, max_bytes, kind, check=None):
+    """Body is the raw file bytes; Content-Type says which kind."""
+    h.require_admin()
+    ext = types.get((h.headers.get("Content-Type") or "").split(";")[0].strip().lower())
+    if not ext:
+        raise ApiError(415, "Photos must be JPEG, PNG, WebP or GIF." if kind == "photo" else "3D models must be .glb files.")
+    length = int(h.headers.get("Content-Length") or 0)
+    if not length:
+        raise ApiError(400, f"No {kind} received.")
+    if length > max_bytes:
+        raise ApiError(413, f"That {kind} is too big (max {max_bytes // (1024 * 1024)} MB).")
+    data = h.rfile.read(length)
+    if check:
+        check(data)
+    with db_lock, DB:
+        row = DB.execute(f"SELECT {column} FROM products WHERE id=?", (pid,)).fetchone()
+        if not row:
+            raise ApiError(404, "Product not found.")
+        name = f"p{pid}-{secrets.token_hex(4)}{ext}"
+        (UPLOAD_DIR / name).write_bytes(data)
+        try:
+            DB.execute(f"UPDATE products SET {column}=? WHERE id=?", ("/uploads/" + name, pid))
+            updated = DB.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+        except Exception:
+            (UPLOAD_DIR / name).unlink(missing_ok=True)  # don't leave an orphaned file behind
+            raise
+    remove_uploaded(row[column])
+    h.send_json(200, {"product": product_dict(updated, admin=True)})
+
+
+def admin_upload_image(h, q, pid):
+    save_upload(h, pid, "image_url", IMAGE_TYPES, MAX_IMAGE_BYTES, "photo")
+
+
+def check_glb(data):
+    if data[:4] != b"glTF":
+        raise ApiError(415, "That isn't a .glb 3D model. In your scanning app, export as GLB.")
+
+
+def admin_upload_model(h, q, pid):
+    save_upload(h, pid, "model_url", MODEL_TYPES, MAX_MODEL_BYTES, "3D model", check_glb)
 
 
 def admin_orders(h, q):
@@ -479,6 +591,8 @@ ROUTES = [
     (r"/api/admin/products", "POST", admin_create_product),
     (r"/api/admin/products/(\d+)", "PATCH", admin_update_product),
     (r"/api/admin/products/(\d+)", "DELETE", admin_delete_product),
+    (r"/api/admin/products/(\d+)/image", "POST", admin_upload_image),
+    (r"/api/admin/products/(\d+)/model", "POST", admin_upload_model),
     (r"/api/admin/orders", "GET", admin_orders),
     (r"/api/admin/orders/(\d+)", "PATCH", admin_update_order),
 ]
@@ -488,6 +602,10 @@ if __name__ == "__main__":
     init_db()
     if "ADMIN_PASSWORD" not in os.environ:
         print("WARNING: ADMIN_PASSWORD not set — staff password is 'emporium'. Set it before going live.")
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    class Server(ThreadingHTTPServer):
+        request_queue_size = 128  # default is 5; a lunchtime rush needs more room
+        daemon_threads = True
+
+    server = Server(("0.0.0.0", PORT), Handler)
     print(f"The Emporium is open at http://localhost:{PORT}  (staff: /admin)")
     server.serve_forever()
