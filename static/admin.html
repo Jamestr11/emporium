@@ -41,14 +41,21 @@
     .thumb img { width: 100%; height: 100%; object-fit: cover; }
     .thumb.add { border-style: dashed; font-family: var(--body); font-size: 11px; font-weight: 600; line-height: 1.1; text-align: center; }
     .thumb.busy::after { content: ""; position: absolute; inset: 0; background: color-mix(in srgb, var(--surface) 70%, transparent); }
-    .thumb.lg { width: 112px; height: 112px; cursor: default; font-size: 13px; }
+    .thumb.lg { width: 140px; height: 140px; cursor: default; font-size: 13px; }
+    .thumb.drop { outline: 3px dashed var(--brand); outline-offset: 2px; }
     .photo-edit { display: flex; gap: 14px; align-items: center; }
     .thumb img { object-fit: contain; }
-    .thumb { background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 12px 12px; }
+    .thumb { background: radial-gradient(circle at 50% 35%, var(--surface), var(--surface-2)); }
     .thumb.add { background: var(--surface-2); }
-    .tag3d { position: absolute; right: 2px; bottom: 2px; background: var(--brand); color: var(--brand-ink); font: 700 9px var(--body); padding: 1px 4px; border-radius: 4px; }
+
     .item-cell { display: flex; gap: 12px; align-items: center; }
     .photo-progress { font-size: 13px; color: var(--muted); }
+    .picks { display: flex; gap: 10px; flex-wrap: wrap; }
+    .pick { width: 96px; height: 96px; padding: 4px; border-radius: 12px; border: 2px solid var(--line); background: #fff; cursor: pointer; }
+    .pick img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .pick.on { border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent); }
+    .pick.broken { display: none; }
+    #autoPanel { border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
     @media (max-width: 640px) {
       .inv thead { display: none; }
       .inv tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -63,6 +70,7 @@
       <a class="logo" href="/admin"><b>The Emporium</b><span>Staff</span></a>
       <div class="spacer"></div>
       <a class="btn small hide-sm" href="/" target="_blank">View store</a>
+      <button class="btn small" id="settingsBtn" hidden>Settings</button>
       <button class="btn small" id="pwBtn" hidden>Password</button>
       <button class="btn small" id="logout" hidden>Sign out</button>
     </div>
@@ -86,27 +94,16 @@
         <div class="photo-edit">
           <div class="thumb lg" id="editThumb"></div>
           <div style="display:grid;gap:8px">
+            <button type="button" class="btn small primary" id="autoPhoto">✨ Find photo for me</button>
+            <button type="button" class="btn small" id="findPhoto">Search images myself</button>
+            <button type="button" class="btn small" id="pastePhoto">Paste photo</button>
             <button type="button" class="btn small" data-photo-edit>Take or choose photo</button>
             <button type="button" class="btn small danger" id="removePhoto">Remove photo</button>
           </div>
         </div>
+        <div id="candidates" class="picks" style="margin-top:10px"></div>
+        <p class="hint" id="findHint" hidden>In the search tab, right-click (or press and hold) the picture you want → <b>Copy image</b>. Then come back here and press <b>Paste photo</b> (or ⌘V / Ctrl+V).</p>
         <input name="image_url" type="hidden">
-      </div>
-      <div class="field">
-        <label>3D model <span class="hint">(optional — lets shoppers spin the item)</span></label>
-        <p class="hint" id="modelStatus" style="margin:0"></p>
-        <div class="toolbar" style="margin:0">
-          <button type="button" class="btn small" data-model-edit>Upload .glb file</button>
-          <button type="button" class="btn small danger" id="removeModel">Remove 3D model</button>
-        </div>
-        <details><summary class="hint" style="cursor:pointer">How do I make one?</summary>
-          <ol class="hint" style="margin:6px 0 0;padding-left:18px">
-            <li>Install a free scanning app: <b>Polycam</b> or <b>KIRI Engine</b> (iPhone or Android).</li>
-            <li>Put the item on a plain table with good light and walk slowly around it while the app scans (photo mode works best).</li>
-            <li>Crop away the table in the app, then export/share as <b>GLB</b>.</li>
-            <li>Tap “Upload .glb file” here and pick it.</li>
-          </ol>
-        </details>
       </div>
       <label class="switch"><input type="checkbox" name="active"> Show in store</label>
       <p class="error" id="editError"></p>
@@ -114,6 +111,22 @@
         <button type="button" class="btn danger" id="deleteItem" style="margin-right:auto">Delete</button>
         <button type="button" class="btn" id="cancelEdit">Cancel</button>
         <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="settingsDialog">
+    <form id="settingsForm">
+      <h2 style="margin-bottom:6px">Settings</h2>
+      <h3 style="font-size:16px;margin:12px 0 4px">AI key for “Add by name”</h3>
+      <p class="hint" style="margin:0 0 8px" id="keyStatus">Loading…</p>
+      <div class="field"><label for="keyInput">Anthropic API key</label>
+        <input id="keyInput" name="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" required></div>
+      <p class="hint">Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (add a few dollars of credit). Each “Add by name” lookup costs roughly 10–30¢. The key stays on the server and is never shown again.</p>
+      <p class="error" id="settingsError"></p>
+      <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
+        <button type="button" class="btn danger" id="removeKey" style="margin-right:auto" hidden>Remove key</button>
+        <button type="button" class="btn" id="closeSettings">Close</button>
+        <button class="btn primary">Save key</button>
       </div>
     </form>
   </dialog>
@@ -154,7 +167,7 @@ async function api(path, opts = {}) {
 }
 
 function showLogin() {
-  $("#logout").hidden = true; $("#pwBtn").hidden = true;
+  $("#logout").hidden = true; $("#pwBtn").hidden = true; $("#settingsBtn").hidden = true;
   $("#app").innerHTML = `<form class="panel login" id="loginForm">
     <h2>Staff sign in</h2>
     <div class="field"><label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password"></div>
@@ -165,7 +178,7 @@ function showLogin() {
 }
 
 function showSetup() {
-  $("#logout").hidden = true; $("#pwBtn").hidden = true;
+  $("#logout").hidden = true; $("#pwBtn").hidden = true; $("#settingsBtn").hidden = true;
   $("#app").innerHTML = `<form class="panel login" id="setupForm">
     <h2>Welcome to the Emporium</h2>
     <p class="hint" style="margin-top:4px">Create the staff password. Everyone who runs the store will use it to sign in here.</p>
@@ -181,7 +194,7 @@ async function boot() {
   const { signed_in, needs_setup } = await api("/api/admin/me");
   if (needs_setup) return showSetup();
   if (!signed_in) return showLogin();
-  $("#logout").hidden = false; $("#pwBtn").hidden = false;
+  $("#logout").hidden = false; $("#pwBtn").hidden = false; $("#settingsBtn").hidden = false;
   renderShell();
   await Promise.all([loadOrders(), loadProducts()]);
 }
@@ -228,13 +241,133 @@ function renderOrders() {
   body.innerHTML = `<div class="chips" style="padding-top:4px">${filters}</div><div class="orders">${list}</div>`;
 }
 
+// ---- Add by name: Claude looks the product up and drafts the listing ----
+const auto = { query: "", busy: false, error: "", draft: null, chosen: 0, saving: false, broken: new Set() };
+// Called by a candidate photo that fails to load; remembered so re-renders keep it hidden.
+function markBroken(img) {
+  auto.broken.add(img.dataset.url);
+  img.closest(".pick")?.classList.add("broken");
+  if (auto.draft && auto.draft.image_urls[auto.chosen] === img.dataset.url) {
+    const next = auto.draft.image_urls.findIndex(u => !auto.broken.has(u));
+    if (next >= 0) { auto.chosen = next; document.querySelectorAll(".pick").forEach((el, i) => el.classList.toggle("on", i === next)); }
+  }
+}
+
+function renderAuto() {
+  const d = auto.draft;
+  const head = `<h2>Add by name <span class="hint" style="font-family:var(--body);font-weight:500">✨ finds the photo &amp; details for you</span></h2>`;
+  if (!d) return `<section class="panel" id="autoPanel">${head}
+    <form id="autoForm" class="toolbar" style="margin:0">
+      <input class="search" name="q" id="autoQuery" required maxlength="500" value="${esc(auto.query)}"
+        placeholder="Type the product, e.g. “JBL Go 4 speaker black” — or paste a link" ${auto.busy ? "disabled" : ""}>
+      <button class="btn primary" ${auto.busy ? "disabled" : ""}>${auto.busy ? "Searching…" : "Find it"}</button>
+    </form>
+    ${auto.busy ? `<p class="hint" style="margin:10px 0 0">Searching the web for the product, photos and details. This takes about 30–60 seconds.</p>` : ""}
+    ${auto.error ? `<p class="error" style="margin:10px 0 0">${esc(auto.error)}</p>` : ""}
+  </section>`;
+  const pics = d.image_urls.map((u, i) => `<button type="button" class="pick ${i === auto.chosen ? "on" : ""} ${auto.broken.has(u) ? "broken" : ""}" data-pick="${i}" aria-label="Use photo ${i + 1}">
+      <img src="${esc(u)}" data-url="${esc(u)}" alt="" referrerpolicy="no-referrer" onerror="markBroken(this)"></button>`).join("");
+  return `<section class="panel" id="autoPanel">${head}
+    ${d.found ? "" : `<p class="error">Couldn't pin down that exact product — check everything below.</p>`}
+    ${d.notes ? `<p class="hint" style="margin-top:0">Note: ${esc(d.notes)}</p>` : ""}
+    <form id="draftForm">
+      <div class="field"><label>Photo <span class="hint">— tap the best one</span></label>
+        <div class="picks">${pics || `<p class="hint">No photos found — add one after saving (Edit → Find photo).</p>`}</div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Name</label><input name="name" data-draft="name" required maxlength="120" value="${esc(d.name)}"></div>
+        <div class="field"><label>Category</label><input name="category" data-draft="category" list="catList" maxlength="60" value="${esc(d.category)}"></div>
+        <div class="field"><label>Your price ($)</label><input name="price" data-draft="price" type="number" step="0.01" min="0" required value="${esc(d.price)}">
+          ${d.retail_price ? `<span class="hint">Usually sells for $${d.retail_price.toFixed(2)}</span>` : ""}</div>
+        <div class="field"><label>How many in stock</label><input name="stock" data-draft="stock" type="number" step="1" min="0" required value="${esc(d.stock)}"></div>
+      </div>
+      <div class="field"><label>Description</label><textarea name="description" data-draft="description" maxlength="500">${esc(d.description)}</textarea></div>
+      ${d.source_url ? `<p class="hint">Source: <a href="${esc(d.source_url)}" target="_blank" rel="noopener noreferrer">${esc(d.source_url.replace(/^https?:\/\//, "").slice(0, 60))}</a></p>` : ""}
+      <p class="error" id="draftError"></p>
+      <div class="toolbar" style="margin:0">
+        <button class="btn primary" ${auto.saving ? "disabled" : ""}>${auto.saving ? "Adding…" : "Add to store"}</button>
+        <button type="button" class="btn" id="discardDraft" ${auto.saving ? "disabled" : ""}>Start over</button>
+      </div>
+    </form>
+  </section>`;
+}
+
+async function runLookup(query) {
+  auto.query = query; auto.busy = true; auto.error = ""; renderInventory();
+  try {
+    const { listing } = await api("/api/admin/lookup", { method: "POST", body: JSON.stringify({ query }) });
+    auto.draft = { ...listing, price: listing.retail_price ? listing.retail_price.toFixed(2) : "", stock: 1 };
+    auto.chosen = 0; auto.broken = new Set();
+  } catch (ex) {
+    auto.error = ex.message;
+    if (/AI key/.test(ex.message)) openSettings();
+  }
+  auto.busy = false; renderInventory();
+}
+
+// Get the image bytes so we can cut out the background: straight from the site if it allows it,
+// otherwise through our server. Returns null if neither works (we then link the photo instead).
+async function loadRemoteImage(url) {
+  try {
+    const r = await fetch(url, { mode: "cors", referrerPolicy: "no-referrer" });
+    if (r.ok) { const b = await r.blob(); if (b.type.startsWith("image/")) return b; }
+  } catch {}
+  try {
+    const r = await fetch("/api/admin/fetch-image?url=" + encodeURIComponent(url), { credentials: "same-origin" });
+    if (r.ok) return await r.blob();
+  } catch {}
+  return null;
+}
+
+async function usePhotoFromWeb(id, url) {
+  const blob = await loadRemoteImage(url);
+  if (blob) return processPhoto(id, blob);
+  const { product } = await api("/api/admin/products/" + id, { method: "PATCH", body: JSON.stringify({ image_url: url }) });
+  updateProduct(product);
+  toast("Photo linked (couldn't download it to cut out the background)");
+}
+
+async function saveDraft() {
+  const d = auto.draft;
+  const working = d.image_urls.map((u, i) => auto.broken.has(u) ? null : i).filter(i => i !== null);
+  const pick = working.includes(auto.chosen) ? auto.chosen : working[0];
+  auto.saving = true; renderInventory();
+  try {
+    const { product } = await api("/api/admin/products", { method: "POST", body: JSON.stringify({
+      name: d.name, price: d.price, stock: d.stock, category: d.category, description: d.description }) });
+    products.push(product);
+    auto.draft = null; auto.query = ""; auto.saving = false;
+    renderInventory();
+    toast(`Added ${product.name}`);
+    if (pick !== undefined) await usePhotoFromWeb(product.id, d.image_urls[pick]);
+    loadProducts();
+  } catch (ex) {
+    auto.saving = false; renderInventory();
+    $("#draftError").textContent = ex.message;
+  }
+}
+
+// ---- Settings (AI key) ----
+async function openSettings() {
+  $("#settingsError").textContent = ""; $("#settingsForm").reset();
+  $("#settingsDialog").showModal();
+  try {
+    const st = await api("/api/admin/settings");
+    $("#keyStatus").innerHTML = st.ai_key_set
+      ? `✓ AI key saved (${esc(st.ai_key_hint)})${st.ai_key_from_env ? " — set on the server" : ""}`
+      : "No AI key yet — “Add by name” won't work until you add one.";
+    $("#removeKey").hidden = !st.ai_key_set || st.ai_key_from_env;
+  } catch {}
+}
+
 function renderInventory() {
   const body = $("#tabBody"); if (!body) return;
   const q = invQuery.toLowerCase();
   const list = products.filter(p => !q || (p.name + " " + p.category).toLowerCase().includes(q));
   body.innerHTML = `
+    ${renderAuto()}
     <section class="panel">
-      <h2>Add an item</h2>
+      <h2>Add an item yourself</h2>
       <form id="addForm">
         <div class="grid2">
           <div class="field"><label>Name</label><input name="name" required maxlength="120" placeholder="Hot Cheetos"></div>
@@ -258,13 +391,13 @@ function renderInventory() {
     </section>
     <section class="panel">
       <div class="toolbar"><h2 style="margin:0;flex:1">Inventory · ${products.length}</h2>
-        <span class="photo-progress">${products.filter(p => p.image_url).length} of ${products.length} have photos · ${products.filter(p => p.model_url).length} have 3D · tap a square to add a photo</span></div>
+        <span class="photo-progress">${products.filter(p => p.image_url).length} of ${products.length} have photos · tap a square to upload, or Edit → Find photo online</span></div>
       <label class="switch" style="margin-bottom:12px"><input type="checkbox" id="cutoutToggle" ${wantCutout() ? "checked" : ""}> Cut out photo backgrounds automatically (makes items float in 3D on the store)</label>
       <div class="toolbar"><input class="search" id="invSearch" type="search" placeholder="Search items…" value="${esc(invQuery)}"></div>
       ${list.length ? `<table class="inv"><thead><tr><th>Item</th><th class="c-cat">Category</th><th>Price</th><th>Stock</th><th></th></tr></thead><tbody>
         ${list.map(p => `<tr class="${p.active ? "" : "hidden-item"}">
           <td><div class="item-cell">
-            <button class="thumb ${p.image_url ? "" : "add"}" data-photo="${p.id}" title="${p.image_url ? "Change photo" : "Add photo"}" aria-label="${p.image_url ? "Change" : "Add"} photo for ${esc(p.name)}">${p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : "+ Photo"}${p.model_url ? `<span class="tag3d">3D</span>` : ""}</button>
+            <button class="thumb ${p.image_url ? "" : "add"}" data-photo="${p.id}" title="${p.image_url ? "Change photo" : "Add photo"}" aria-label="${p.image_url ? "Change" : "Add"} photo for ${esc(p.name)}">${p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : "+ Photo"}</button>
             <div><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="hint">(hidden)</span>`}</div>
           </div></td>
           <td class="c-cat">${esc(p.category)}</td>
@@ -282,13 +415,13 @@ function openEdit(p) {
   f.image_url.value = p.image_url; f.active.checked = p.active;
   $("#editError").textContent = "";
   renderEditThumb(p);
+  $("#findHint").hidden = true;
+  $("#candidates").innerHTML = "";
   $("#editDialog").showModal();
 }
 function renderEditThumb(p) {
   $("#editThumb").innerHTML = p.image_url ? `<img src="${esc(p.image_url)}" alt="">` : "No photo";
   $("#removePhoto").hidden = !p.image_url;
-  $("#modelStatus").innerHTML = p.model_url ? `✓ 3D model added — shoppers can spin it. <a href="${esc(p.model_url)}" download>Download</a>` : "No 3D model yet.";
-  $("#removeModel").hidden = !p.model_url;
 }
 function updateProduct(product) {
   products[products.findIndex(p => p.id == product.id)] = product;
@@ -298,11 +431,9 @@ function updateProduct(product) {
 
 // ---- photos ----
 const picker = Object.assign(document.createElement("input"), { type: "file", accept: "image/*", hidden: true });
-const modelPicker = Object.assign(document.createElement("input"), { type: "file", accept: ".glb,model/gltf-binary", hidden: true });
-document.body.append(picker, modelPicker);
-let photoTarget = null, modelTarget = null;
+document.body.append(picker);
+let photoTarget = null;
 function pickPhoto(id) { photoTarget = id; picker.value = ""; picker.click(); }
-function pickModel(id) { modelTarget = id; modelPicker.value = ""; modelPicker.click(); }
 const wantCutout = () => { try { return localStorage.getItem("em_cutout") !== "0"; } catch { return true; } };
 
 // Background removal runs entirely in this browser (no photo is sent anywhere but our server).
@@ -351,6 +482,7 @@ async function shrink(file) {
   if (!bmp) return file;
   const scale = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
   const [c, g] = canvasFrom(bmp, Math.round(bmp.width * scale), Math.round(bmp.height * scale));
+  g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);  // JPEG has no transparency; avoid black
   g.drawImage(bmp, 0, 0, c.width, c.height);
   return (await toBlob(c, "image/jpeg", 0.85)) || file;
 }
@@ -363,9 +495,9 @@ async function upload(id, kind, blob, type) {
   return data.product;
 }
 
-picker.addEventListener("change", async () => {
-  const file = picker.files[0], id = photoTarget;
-  if (!file || !id) return;
+picker.addEventListener("change", () => { if (picker.files[0] && photoTarget) processPhoto(photoTarget, picker.files[0]); });
+
+async function processPhoto(id, file) {
   const thumb = () => document.querySelector(`[data-photo="${id}"]`);
   thumb()?.classList.add("busy");
   try {
@@ -385,15 +517,62 @@ picker.addEventListener("change", async () => {
     updateProduct(await upload(id, "image", blob, blob.type || file.type));
     toast(blob.type === "image/jpeg" ? "Photo saved" : "Photo saved — background removed ✨");
   } catch (ex) { toast(ex.message); thumb()?.classList.remove("busy"); }
-});
+  $("#editThumb")?.classList.remove("busy");
+}
 
-modelPicker.addEventListener("change", async () => {
-  const file = modelPicker.files[0], id = modelTarget;
-  if (!file || !id) return;
-  if (!/\.glb$/i.test(file.name)) { toast("Pick a .glb file — export as GLB from your scanning app."); return; }
-  toast("Uploading 3D model…");
-  try { updateProduct(await upload(id, "model", file, "model/gltf-binary")); toast("3D model saved"); }
-  catch (ex) { toast(ex.message); }
+async function autoFindPhoto() {
+  const box = $("#candidates");
+  box.innerHTML = `<p class="hint">Searching the web for photos of this item (30–60 seconds)…</p>`;
+  try {
+    const query = [$("#editForm").name.value, $("#editForm").category.value].filter(Boolean).join(" — ");
+    const { listing } = await api("/api/admin/lookup", { method: "POST", body: JSON.stringify({ query }) });
+    box.innerHTML = listing.image_urls.length
+      ? `<p class="hint" style="width:100%;margin:0">Tap the right photo:</p>` + listing.image_urls.map(u => `<button type="button" class="pick" data-cand="${esc(u)}"><img src="${esc(u)}" alt="" referrerpolicy="no-referrer" onerror="this.closest('.pick').remove()"></button>`).join("")
+      : `<p class="hint">No photos found. Try “Search images myself”.</p>`;
+  } catch (ex) {
+    box.innerHTML = `<p class="error">${esc(ex.message)}</p>`;
+    if (/AI key/.test(ex.message)) { $("#editDialog").close(); openSettings(); }
+  }
+}
+
+// ---- find a photo online, then paste it ----
+const editingId = () => $("#editDialog").open ? $("#editForm").id.value : null;
+function findPhoto() {
+  const name = $("#editForm").name.value.trim();
+  window.open("https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(name), "_blank", "noopener");
+  $("#findHint").hidden = false;
+}
+async function pasteFromClipboard() {
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find(t => t.startsWith("image/"));
+      if (type) return startPaste(await item.getType(type));
+    }
+    toast("No picture copied yet — right-click the picture → Copy image.");
+  } catch {
+    toast("Press ⌘V (Mac) or Ctrl+V (Windows) to paste the picture.");
+  }
+}
+function startPaste(blob) {
+  const id = editingId(); if (!id) return;
+  $("#editThumb").classList.add("busy");
+  $("#editThumb").innerHTML = `<img src="${URL.createObjectURL(blob)}" alt="">`;
+  processPhoto(id, blob);
+}
+document.addEventListener("paste", e => {
+  if (!editingId()) return;
+  const file = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/"));
+  if (file) { e.preventDefault(); startPaste(file); }
+  else if (!e.target.matches("input, textarea")) toast("That wasn't a picture — right-click the picture → Copy image.");
+});
+const drop = $("#editThumb");
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("drop"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drop"));
+drop.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("drop");
+  const file = [...e.dataTransfer.files].find(f => f.type.startsWith("image/"));
+  if (file) startPaste(file);
+  else toast("Couldn't grab that picture — right-click it → Copy image, then Paste photo.");
 });
 
 document.addEventListener("click", async e => {
@@ -416,12 +595,20 @@ document.addEventListener("click", async e => {
     else if (b.dataset.edit) openEdit(products.find(p => p.id == b.dataset.edit));
     else if (b.dataset.photo) pickPhoto(b.dataset.photo);
     else if ("photoEdit" in b.dataset) pickPhoto($("#editForm").id.value);
-    else if ("modelEdit" in b.dataset) pickModel($("#editForm").id.value);
-    else if (b.id === "removeModel") {
-      if (!confirm("Remove this item's 3D model?")) return;
-      const { product } = await api("/api/admin/products/" + $("#editForm").id.value, { method: "PATCH", body: JSON.stringify({ model_url: "" }) });
-      updateProduct(product); toast("3D model removed");
+    else if (b.id === "findPhoto") findPhoto();
+    else if (b.id === "autoPhoto") autoFindPhoto();
+    else if (b.dataset.cand) { const id = $("#editForm").id.value; $("#candidates").innerHTML = `<p class="hint">Getting that photo…</p>`; $("#editThumb").classList.add("busy"); await usePhotoFromWeb(id, b.dataset.cand); $("#candidates").innerHTML = ""; $("#editThumb").classList.remove("busy"); }
+    else if (b.dataset.pick !== undefined) { auto.chosen = Number(b.dataset.pick); document.querySelectorAll(".pick").forEach((el, i) => el.classList.toggle("on", i === auto.chosen)); }
+    else if (b.id === "discardDraft") { auto.draft = null; renderInventory(); $("#autoQuery")?.focus(); }
+    else if (b.id === "settingsBtn") openSettings();
+    else if (b.id === "closeSettings") $("#settingsDialog").close();
+    else if (b.id === "removeKey") {
+      if (!confirm("Remove the saved AI key? “Add by name” will stop working until you add one again.")) return;
+      await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: "" }) });
+      toast("AI key removed"); openSettings();
     }
+    else if (b.id === "pastePhoto") pasteFromClipboard();
+
     else if (b.id === "removePhoto") {
       const id = $("#editForm").id.value;
       const { product } = await api("/api/admin/products/" + id, { method: "PATCH", body: JSON.stringify({ image_url: "" }) });
@@ -445,12 +632,28 @@ document.addEventListener("change", e => {
   if (e.target.id === "cutoutToggle") { try { localStorage.setItem("em_cutout", e.target.checked ? "1" : "0"); } catch {} }
 });
 document.addEventListener("input", e => {
+  const k = e.target.dataset?.draft;
+  if (k && auto.draft) { auto.draft[k] = e.target.value; return; }
+  if (e.target.id === "autoQuery") { auto.query = e.target.value; return; }
   if (e.target.id === "invSearch") { invQuery = e.target.value; renderInventory(); const s = $("#invSearch"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 });
 
 document.addEventListener("submit", async e => {
   const f = e.target, fid = f.getAttribute("id");  // f.id is shadowed by the hidden "id" input on editForm
-  if (fid === "setupForm") {
+  if (fid === "autoForm") {
+    e.preventDefault();
+    const q = f.q.value.trim(); if (q) runLookup(q);
+    return;
+  } else if (fid === "draftForm") {
+    e.preventDefault(); saveDraft(); return;
+  } else if (fid === "settingsForm") {
+    e.preventDefault();
+    try {
+      await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: f.key.value.trim() }) });
+      toast("AI key saved"); $("#settingsDialog").close();
+    } catch (ex) { $("#settingsError").textContent = ex.message; }
+    return;
+  } else if (fid === "setupForm") {
     e.preventDefault();
     if ($("#newpw").value !== $("#newpw2").value) { $("#setupError").textContent = "Those don't match."; return; }
     try { await api("/api/admin/setup", { method: "POST", body: JSON.stringify({ password: $("#newpw").value }) }); toast("Password created"); boot(); }

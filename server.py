@@ -5,6 +5,11 @@ Zero dependencies: runs on the Python 3.9+ standard library.
 Then open http://localhost:8000 (store) and http://localhost:8000/admin (staff).
 """
 import hashlib
+import ipaddress
+import socket
+import urllib.request
+import urllib.error
+import urllib.parse
 import hmac
 import json
 import os
@@ -26,9 +31,7 @@ UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR") or Path(DB_PATH).resolve().parent
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
 IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
-MAX_MODEL_BYTES = 30 * 1024 * 1024
-MODEL_TYPES = {"model/gltf-binary": ".glb", "application/octet-stream": ".glb"}
-UPLOAD_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif", "glb": "model/gltf-binary"}
+UPLOAD_MIME = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "gif": "image/gif"}
 PORT = int(os.environ.get("PORT", "8000"))
 # Optional: a fixed staff password from the environment. When unset (the normal case), the
 # first person to open /admin creates the password, and only a salted hash is stored.
@@ -113,9 +116,6 @@ def init_db():
             );
             """
         )
-        cols = {r["name"] for r in DB.execute("PRAGMA table_info(products)")}
-        if "model_url" not in cols:
-            DB.execute("ALTER TABLE products ADD COLUMN model_url TEXT NOT NULL DEFAULT ''")
         count = DB.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         seed = ROOT / "products.json"
         if count == 0 and seed.exists():
@@ -146,7 +146,6 @@ def product_dict(row, admin=False):
         "price_cents": row["price_cents"],
         "stock": row["stock"],
         "image_url": row["image_url"],
-        "model_url": row["model_url"],
     }
     if admin:
         d["active"] = bool(row["active"])
@@ -283,10 +282,6 @@ def parse_product(body, partial=False):
         if stock < 0 or stock > 100_000:
             raise ApiError(400, "Stock is out of range.")
         out["stock"] = stock
-    if "model_url" in body:
-        if body.get("model_url"):
-            raise ApiError(400, "Upload 3D models with the 3D button.")
-        out["model_url"] = ""
     if "active" in body:
         out["active"] = 1 if body.get("active") else 0
     return out
@@ -300,6 +295,8 @@ MIME = {
     ".js": "text/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".webp": "image/webp",
     ".ico": "image/x-icon",
     ".json": "application/json",
 }
@@ -349,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/uploads/"):
             name = path[len("/uploads/"):]
             target = UPLOAD_DIR / name
-            if re.fullmatch(r"[A-Za-z0-9_-]+\.(jpg|png|webp|gif|glb)", name) and target.is_file():
+            if re.fullmatch(r"[A-Za-z0-9_-]+\.(jpg|png|webp|gif)", name) and target.is_file():
                 data = target.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", UPLOAD_MIME[name.rsplit(".", 1)[1]])
@@ -559,12 +556,11 @@ def admin_update_product(h, q, pid):
     with db_lock, DB:
         if not DB.execute("SELECT 1 FROM products WHERE id=?", (pid,)).fetchone():
             raise ApiError(404, "Product not found.")
-        old = DB.execute("SELECT image_url, model_url FROM products WHERE id=?", (pid,)).fetchone()
+        old_image = DB.execute("SELECT image_url FROM products WHERE id=?", (pid,)).fetchone()["image_url"]
         sets = ", ".join(f"{k}=?" for k in data)
         DB.execute(f"UPDATE products SET {sets} WHERE id=?", (*data.values(), pid))
-        for col in ("image_url", "model_url"):
-            if col in data and data[col] != old[col]:
-                remove_uploaded(old[col])
+        if "image_url" in data and data["image_url"] != old_image:
+            remove_uploaded(old_image)
         row = DB.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
     h.send_json(200, {"product": product_dict(row, admin=True)})
 
@@ -580,28 +576,25 @@ def remove_uploaded(url):
 def admin_delete_product(h, q, pid):
     h.require_admin()
     with db_lock, DB:
-        row = DB.execute("SELECT image_url, model_url FROM products WHERE id=?", (pid,)).fetchone()
+        row = DB.execute("SELECT image_url FROM products WHERE id=?", (pid,)).fetchone()
         DB.execute("DELETE FROM products WHERE id=?", (pid,))
     if row:
         remove_uploaded(row["image_url"])
-        remove_uploaded(row["model_url"])
     h.send_json(200, {"ok": True})
 
 
-def save_upload(h, pid, column, types, max_bytes, kind, check=None):
+def save_upload(h, pid, column, types, max_bytes, kind):
     """Body is the raw file bytes; Content-Type says which kind."""
     h.require_admin()
     ext = types.get((h.headers.get("Content-Type") or "").split(";")[0].strip().lower())
     if not ext:
-        raise ApiError(415, "Photos must be JPEG, PNG, WebP or GIF." if kind == "photo" else "3D models must be .glb files.")
+        raise ApiError(415, "Photos must be JPEG, PNG, WebP or GIF.")
     length = int(h.headers.get("Content-Length") or 0)
     if not length:
         raise ApiError(400, f"No {kind} received.")
     if length > max_bytes:
         raise ApiError(413, f"That {kind} is too big (max {max_bytes // (1024 * 1024)} MB).")
     data = h.rfile.read(length)
-    if check:
-        check(data)
     with db_lock, DB:
         row = DB.execute(f"SELECT {column} FROM products WHERE id=?", (pid,)).fetchone()
         if not row:
@@ -622,13 +615,105 @@ def admin_upload_image(h, q, pid):
     save_upload(h, pid, "image_url", IMAGE_TYPES, MAX_IMAGE_BYTES, "photo")
 
 
-def check_glb(data):
-    if data[:4] != b"glTF":
-        raise ApiError(415, "That isn't a .glb 3D model. In your scanning app, export as GLB.")
+# ---------- auto-listing ----------
+
+def ai_key():
+    return os.environ.get("ANTHROPIC_API_KEY") or get_setting("anthropic_api_key")
 
 
-def admin_upload_model(h, q, pid):
-    save_upload(h, pid, "model_url", MODEL_TYPES, MAX_MODEL_BYTES, "3D model", check_glb)
+def admin_get_settings(h, q):
+    h.require_admin()
+    key = ai_key()
+    h.send_json(200, {
+        "ai_key_set": bool(key),
+        "ai_key_hint": ("…" + key[-4:]) if key else "",
+        "ai_key_from_env": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    })
+
+
+def admin_save_settings(h, q):
+    h.require_admin()
+    body = h.read_body()
+    if "ai_key" in body:
+        key = str(body.get("ai_key") or "").strip()
+        if key and (len(key) > 300 or not key.startswith("sk-")):
+            raise ApiError(400, "That doesn't look like an Anthropic API key (they start with sk-).")
+        with db_lock, DB:
+            if key:
+                DB.execute("INSERT INTO settings (key, value) VALUES ('anthropic_api_key', ?) "
+                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key,))
+            else:
+                DB.execute("DELETE FROM settings WHERE key='anthropic_api_key'")
+    admin_get_settings(h, q)
+
+
+def admin_lookup(h, q):
+    h.require_admin()
+    query = clean_text(h.read_body().get("query"), "Product", 500, required=True)
+    key = ai_key()
+    if not key:
+        raise ApiError(409, "Add an AI key first (Settings on the staff page).")
+    import lookup
+    cats = [r["category"] for r in DB.execute("SELECT DISTINCT category FROM products")]
+    try:
+        listing = lookup.lookup_product(query, key, cats)
+    except lookup.ListingLookupError as e:
+        raise ApiError(502, str(e))
+    h.send_json(200, {"listing": listing})
+
+
+def _public_host(host):
+    """True only if every address the host resolves to is on the public internet."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0].split("%")[0])
+        if not ip.is_global or ip.is_multicast:
+            return False
+    return True
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def admin_fetch_image(h, q):
+    """Fetch a product photo from the web for the staff page (browsers block most cross-site
+    image downloads). Staff-only, public hosts only, images only, size-capped."""
+    h.require_admin()
+    url = (q.get("url") or [""])[0]
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(4):  # follow up to 3 redirects, re-checking each hop
+        parts = urllib.parse.urlparse(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname or not _public_host(parts.hostname):
+            raise ApiError(400, "That isn't a public web address.")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (EmporiumStore image fetch)", "Accept": "image/*"})
+        try:
+            resp = opener.open(req, timeout=15)
+        except urllib.error.HTTPError as e:
+            if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
+                url = urllib.parse.urljoin(url, e.headers["Location"])
+                continue
+            raise ApiError(502, f"The image site answered {e.code}.")
+        except (urllib.error.URLError, OSError):
+            raise ApiError(502, "Couldn't download that image from this server.")
+        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype not in IMAGE_TYPES:
+            raise ApiError(415, "That link isn't a JPEG, PNG, WebP or GIF image.")
+        data = resp.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            raise ApiError(413, "That image is too big (max 8 MB).")
+        h.send_response(200)
+        h.send_header("Content-Type", ctype)
+        h.send_header("Content-Length", str(len(data)))
+        h.send_header("Cache-Control", "no-store")
+        h.end_headers()
+        h.wfile.write(data)
+        return
+    raise ApiError(502, "Too many redirects.")
 
 
 def admin_orders(h, q):
@@ -682,7 +767,10 @@ ROUTES = [
     (r"/api/admin/products/(\d+)", "PATCH", admin_update_product),
     (r"/api/admin/products/(\d+)", "DELETE", admin_delete_product),
     (r"/api/admin/products/(\d+)/image", "POST", admin_upload_image),
-    (r"/api/admin/products/(\d+)/model", "POST", admin_upload_model),
+    (r"/api/admin/settings", "GET", admin_get_settings),
+    (r"/api/admin/settings", "POST", admin_save_settings),
+    (r"/api/admin/lookup", "POST", admin_lookup),
+    (r"/api/admin/fetch-image", "GET", admin_fetch_image),
     (r"/api/admin/orders", "GET", admin_orders),
     (r"/api/admin/orders/(\d+)", "PATCH", admin_update_order),
 ]

@@ -109,7 +109,6 @@ header.top .wrap { display: flex; align-items: center; gap: 12px; height: 64px; 
     radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--surface) 70%, #fff 30%) 0%, transparent 60%),
     linear-gradient(180deg, var(--surface-2), color-mix(in srgb, var(--surface-2) 70%, var(--line)));
 }
-.stage[data-spin] { cursor: grab; }
 .stage .floor {
   position: absolute; left: 14%; right: 14%; bottom: 10%; height: 16%; border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--surface) 60%, transparent), transparent);
@@ -141,21 +140,10 @@ header.top .wrap { display: flex; align-items: center; gap: 12px; height: 64px; 
 .stage.tilting .obj { animation-play-state: paused; transition: transform .08s linear; }
 .card:hover .stage .obj { --lift: 1; }
 .card.out .stage .obj { filter: grayscale(1) opacity(.6); animation: none; }
-.spin-btn {
-  position: absolute; z-index: 2; right: 8px; top: 8px; border: 0; cursor: pointer;
-  background: var(--ink); color: var(--bg); font-weight: 700; font-size: 12px; padding: 4px 9px; border-radius: 999px;
-}
 @keyframes float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -5px; } }
 @keyframes shadow-breathe { 0%, 100% { transform: scaleX(1); opacity: 1; } 50% { transform: scaleX(.88); opacity: .75; } }
 @media (prefers-reduced-motion: reduce) { .stage .obj, .stage .shadow { animation: none; } }
 
-.spin-dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); width: min(640px, calc(100% - 32px)); padding: 16px; }
-.spin-dialog::backdrop { background: rgba(0,0,0,.5); }
-.spin-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
-.spin-head h2 { font-size: 20px; }
-.spin-holder { aspect-ratio: 1 / 1; max-height: 70vh; width: 100%; border-radius: 12px; overflow: hidden;
-  background: radial-gradient(100% 80% at 50% 10%, var(--surface), var(--surface-2)); }
-.spin-holder model-viewer { width: 100%; height: 100%; --poster-color: transparent; }
 
 .card .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
 .card .cat { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }

@@ -5,15 +5,16 @@ Pickup-order website for the school store.
 - **Store** (`/`) — students browse items, add to a cart, and place a pickup order. They get a code (like `EM-4K7QZ`) to show at the store and pay at pickup. Sold-out items can't be ordered.
 - **Staff** (`/admin`) — password-protected. See incoming orders (New → Ready → Picked up & paid, or Cancel, which puts items back in stock), and manage inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
 
-No dependencies — just Python 3.9+.
+Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install -r requirements.txt`. Everything else works without it.
 
-## Photos and 3D
+## Adding items
 
-Every item shows as a little 3D object on the store: it floats on a stand with a shadow and tilts toward your mouse.
+- **Add by name (easiest):** on the staff page → Inventory, type the product (e.g. "JBL Go 4 speaker black") or paste a link and press **Find it**. Claude searches the web and drafts the listing — name, short description, category, the usual retail price, and a few product photos. Pick the best photo, set your price and stock, and press **Add to store**. The photo's background is cut out automatically so the item floats on the store page.
+  Needs an Anthropic API key: staff page → **Settings** → paste it (get one at console.anthropic.com and add a little credit). Each lookup costs roughly 10–30¢. The key is stored on the server and never shown again; `ANTHROPIC_API_KEY` in the environment works too.
+- **Photos for existing items:** Edit → **✨ Find photo for me** (uses the same lookup), or **Search images myself** → right-click a picture → Copy image → **Paste photo**. **Take or choose photo** uploads from the phone camera or files.
+- **Add an item yourself / Add many at once** still work without any key.
 
-- **Photos:** on the staff page → Inventory, tap an item's **+ Photo** square (on a phone it offers the camera). The background is cut out automatically in the browser, so the item floats on its own. The first cut-out downloads the cut-out tool (~40 MB, cached after that) and takes 10–30 seconds. Untick "Cut out photo backgrounds automatically" to upload photos as-is; they then show as a tilted framed photo.
-  Tip: shoot the item on a plain table against a plain wall, filling most of the frame.
-- **Spinnable 3D models (optional):** scan the item with a free app such as **Polycam** or **KIRI Engine**, export as **GLB**, then on the staff page tap **Edit → Upload .glb file**. Shoppers see a "↻ 3D" button and can drag to spin the item all the way around (and view it in AR on phones). Max 30 MB.
+Every item shows as a little 3D object on the store: it floats on a stand with a shadow and tilts toward your mouse. The first background cut-out downloads the cut-out tool (~40 MB, cached after that). Untick "Cut out photo backgrounds automatically" to keep photos as-is.
 
 ## Run it on your Mac
 
@@ -37,6 +38,7 @@ The live site runs on [PythonAnywhere](https://www.pythonanywhere.com) through `
    ```bash
    git clone https://github.com/<you>/emporium.git ~/emporium
    mkdir -p ~/emporium-data
+   pip3 install --user -r ~/emporium/requirements.txt
    ```
 2. **Web** tab → *Add a new web app* → *Manual configuration* → newest Python 3.
 3. Click the **WSGI configuration file** link, replace everything in it with:
