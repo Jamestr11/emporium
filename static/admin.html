@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emporium Staff</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .tabs { display: flex; gap: 6px; padding: 20px 0 8px; flex-wrap: wrap; }
+    .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; margin-bottom: 16px; }
+    .panel h2 { font-size: 22px; margin-bottom: 12px; }
+    .orders { display: grid; gap: 12px; padding-bottom: 60px; }
+    .order { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+    .order .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .order .code-sm { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 17px; }
+    .order .meta { color: var(--muted); font-size: 13px; }
+    .order .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .order .note { background: var(--surface-2); border-radius: 8px; padding: 6px 10px; font-size: 13px; margin-top: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+    td.num { white-space: nowrap; }
+    tr.hidden-item td { opacity: .5; }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+    .login { max-width: 360px; margin: 80px auto; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .toolbar .search { flex: 1; min-width: 180px; }
+    .switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+    dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); width: min(520px, calc(100% - 32px)); padding: 20px; }
+    dialog::backdrop { background: rgba(0,0,0,.4); }
+    @media (max-width: 640px) {
+      .inv thead { display: none; }
+      .inv tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .inv td { border: 0; padding: 2px 0; }
+      .inv td.c-cat { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="logo" href="/admin"><b>The Emporium</b><span>Staff</span></a>
+      <div class="spacer"></div>
+      <a class="btn small hide-sm" href="/" target="_blank">View store</a>
+      <button class="btn small" id="logout" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main class="wrap" id="app"></main>
+
+  <dialog id="editDialog">
+    <form id="editForm" method="dialog">
+      <h2 id="editTitle" style="margin-bottom:12px">Edit item</h2>
+      <input type="hidden" name="id">
+      <div class="field"><label>Name</label><input name="name" required maxlength="120"></div>
+      <div class="grid2">
+        <div class="field"><label>Price ($)</label><input name="price" type="number" step="0.01" min="0" required></div>
+        <div class="field"><label>Stock</label><input name="stock" type="number" step="1" min="0" required></div>
+      </div>
+      <div class="field"><label>Category</label><input name="category" list="catList" maxlength="60" placeholder="Snacks, Drinks, Merch…"></div>
+      <div class="field"><label>Description <span class="hint">(optional)</span></label><textarea name="description" maxlength="500"></textarea></div>
+      <div class="field"><label>Image link <span class="hint">(optional, https://…)</span></label><input name="image_url" type="url" maxlength="1000"></div>
+      <label class="switch"><input type="checkbox" name="active"> Show in store</label>
+      <p class="error" id="editError"></p>
+      <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
+        <button type="button" class="btn danger" id="deleteItem" style="margin-right:auto">Delete</button>
+        <button type="button" class="btn" id="cancelEdit">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <datalist id="catList"></datalist>
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const money = c => "$" + (c / 100).toFixed(2);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const ago = t => { const m = Math.round((Date.now()/1000 - t) / 60); return m < 1 ? "just now" : m < 60 ? m + "m ago" : m < 1440 ? Math.round(m/60) + "h ago" : new Date(t*1000).toLocaleDateString(); };
+
+let tab = "orders", orderFilter = "new", invQuery = "";
+let orders = [], counts = {}, products = [];
+
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 1800); }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, credentials: "same-origin", ...opts });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.endsWith("/login")) { showLogin(); throw new Error("Please sign in."); }
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+function showLogin() {
+  $("#logout").hidden = true;
+  $("#app").innerHTML = `<form class="panel login" id="loginForm">
+    <h2>Staff sign in</h2>
+    <div class="field"><label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password"></div>
+    <p class="error" id="loginError"></p>
+    <button class="btn primary block">Sign in</button>
+  </form>`;
+  $("#pw").focus();
+}
+
+async function boot() {
+  const { signed_in } = await api("/api/admin/me");
+  if (!signed_in) return showLogin();
+  $("#logout").hidden = false;
+  renderShell();
+  await Promise.all([loadOrders(), loadProducts()]);
+}
+
+function renderShell() {
+  $("#app").innerHTML = `<nav class="tabs">
+      <button class="chip ${tab === "orders" ? "on" : ""}" data-tab="orders">Orders</button>
+      <button class="chip ${tab === "inventory" ? "on" : ""}" data-tab="inventory">Inventory</button>
+    </nav><div id="tabBody"></div>`;
+  render();
+}
+
+function render() { tab === "orders" ? renderOrders() : renderInventory(); }
+
+async function loadOrders() {
+  try { ({ orders, counts } = await api("/api/admin/orders?status=" + orderFilter)); if (tab === "orders") renderOrders(); } catch {}
+}
+async function loadProducts() {
+  try { ({ products } = await api("/api/admin/products")); if (tab === "inventory") renderInventory(); } catch {}
+  $("#catList").innerHTML = [...new Set(products.map(p => p.category))].map(c => `<option value="${esc(c)}">`).join("");
+}
+
+const LABEL = { new: "New", ready: "Ready", picked_up: "Picked up", cancelled: "Cancelled" };
+function renderOrders() {
+  const body = $("#tabBody"); if (!body) return;
+  const filters = Object.keys(LABEL).map(s => `<button class="chip ${s === orderFilter ? "on" : ""}" data-filter="${s}">${LABEL[s]} · ${counts[s] ?? 0}</button>`).join("");
+  const list = orders.length ? orders.map(o => `<article class="order">
+      <div class="head">
+        <span class="code-sm">${esc(o.code)}</span>
+        <span class="status-pill s-${o.status}">${LABEL[o.status]}</span>
+        <span class="spacer"></span>
+        <b>${money(o.total_cents)}</b>
+      </div>
+      <div class="meta"><b style="color:var(--ink)">${esc(o.customer_name)}</b>${o.customer_contact ? " · " + esc(o.customer_contact) : ""} · ${ago(o.created_at)}</div>
+      <div style="margin-top:6px">${o.items.map(i => `${i.qty}× ${esc(i.name)}`).join(" · ")}</div>
+      ${o.note ? `<div class="note">${esc(o.note)}</div>` : ""}
+      <div class="actions">
+        ${o.status === "new" ? `<button class="btn small primary" data-status="ready" data-id="${o.id}">Mark ready</button>` : ""}
+        ${o.status === "new" || o.status === "ready" ? `<button class="btn small ${o.status === "ready" ? "primary" : ""}" data-status="picked_up" data-id="${o.id}">Picked up &amp; paid</button>` : ""}
+        ${o.status === "new" || o.status === "ready" ? `<button class="btn small danger" data-status="cancelled" data-id="${o.id}">Cancel</button>` : ""}
+        ${o.status === "cancelled" || o.status === "picked_up" ? `<button class="btn small" data-status="new" data-id="${o.id}">Reopen</button>` : ""}
+      </div>
+    </article>`).join("") : `<p class="empty">No ${LABEL[orderFilter].toLowerCase()} orders.</p>`;
+  body.innerHTML = `<div class="chips" style="padding-top:4px">${filters}</div><div class="orders">${list}</div>`;
+}
+
+function renderInventory() {
+  const body = $("#tabBody"); if (!body) return;
+  const q = invQuery.toLowerCase();
+  const list = products.filter(p => !q || (p.name + " " + p.category).toLowerCase().includes(q));
+  body.innerHTML = `
+    <section class="panel">
+      <h2>Add an item</h2>
+      <form id="addForm">
+        <div class="grid2">
+          <div class="field"><label>Name</label><input name="name" required maxlength="120" placeholder="Hot Cheetos"></div>
+          <div class="field"><label>Price ($)</label><input name="price" type="number" step="0.01" min="0" required placeholder="1.50"></div>
+          <div class="field"><label>How many in stock</label><input name="stock" type="number" step="1" min="0" value="0" required></div>
+          <div class="field"><label>Category</label><input name="category" list="catList" maxlength="60" placeholder="Snacks"></div>
+        </div>
+        <details style="margin-bottom:12px"><summary class="hint" style="cursor:pointer">More (description, image)</summary>
+          <div class="field" style="margin-top:10px"><label>Description</label><input name="description" maxlength="500"></div>
+          <div class="field"><label>Image link (https://…)</label><input name="image_url" type="url" maxlength="1000"></div>
+        </details>
+        <p class="error" id="addError"></p>
+        <button class="btn primary">Add item</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h2>Add many at once</h2>
+      <p class="hint" style="margin-top:-6px">One item per line: <b>name, price, stock, category</b> — e.g. <code>Gatorade, 2.00, 24, Drinks</code></p>
+      <form id="bulkForm">
+        <div class="field"><textarea name="lines" rows="5" placeholder="Hot Cheetos, 1.50, 30, Snacks&#10;School Hoodie, 25, 10, Merch"></textarea></div>
+        <p class="error" id="bulkError"></p>
+        <button class="btn primary">Add all</button>
+      </form>
+    </section>
+    <section class="panel">
+      <div class="toolbar"><h2 style="margin:0;flex:1">Inventory · ${products.length}</h2></div>
+      <div class="toolbar"><input class="search" id="invSearch" type="search" placeholder="Search items…" value="${esc(invQuery)}"></div>
+      ${list.length ? `<table class="inv"><thead><tr><th>Item</th><th class="c-cat">Category</th><th>Price</th><th>Stock</th><th></th></tr></thead><tbody>
+        ${list.map(p => `<tr class="${p.active ? "" : "hidden-item"}">
+          <td><b>${esc(p.name)}</b>${p.active ? "" : ` <span class="hint">(hidden)</span>`}</td>
+          <td class="c-cat">${esc(p.category)}</td>
+          <td class="num">${money(p.price_cents)}</td>
+          <td class="num"><div class="stepper"><button data-stock="${p.id}" data-d="-1" aria-label="One less">−</button><span>${p.stock}</span><button data-stock="${p.id}" data-d="1" aria-label="One more">+</button></div></td>
+          <td class="num"><button class="btn small" data-edit="${p.id}">Edit</button></td>
+        </tr>`).join("")}</tbody></table>` : `<p class="empty">${products.length ? "No matches." : "No items yet — add your first one above."}</p>`}
+    </section>`;
+}
+
+function openEdit(p) {
+  const f = $("#editForm");
+  f.id.value = p.id; f.name.value = p.name; f.price.value = (p.price_cents / 100).toFixed(2);
+  f.stock.value = p.stock; f.category.value = p.category; f.description.value = p.description;
+  f.image_url.value = p.image_url; f.active.checked = p.active;
+  $("#editError").textContent = "";
+  $("#editDialog").showModal();
+}
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  try {
+    if (b.dataset.tab) { tab = b.dataset.tab; renderShell(); tab === "orders" ? loadOrders() : loadProducts(); }
+    else if (b.dataset.filter) { orderFilter = b.dataset.filter; renderOrders(); await loadOrders(); }
+    else if (b.dataset.status) {
+      if (b.dataset.status === "cancelled" && !confirm("Cancel this order? Its items go back into stock.")) return;
+      b.disabled = true;
+      await api("/api/admin/orders/" + b.dataset.id, { method: "PATCH", body: JSON.stringify({ status: b.dataset.status }) });
+      toast(LABEL[b.dataset.status]); await Promise.all([loadOrders(), loadProducts()]);
+    }
+    else if (b.dataset.stock) {
+      const p = products.find(p => p.id == b.dataset.stock);
+      const stock = Math.max(0, p.stock + Number(b.dataset.d));
+      p.stock = stock; renderInventory();
+      await api("/api/admin/products/" + p.id, { method: "PATCH", body: JSON.stringify({ stock }) });
+    }
+    else if (b.dataset.edit) openEdit(products.find(p => p.id == b.dataset.edit));
+    else if (b.id === "cancelEdit") $("#editDialog").close();
+    else if (b.id === "deleteItem") {
+      const f = $("#editForm");
+      if (!confirm(`Delete “${f.name.value}” for good? (To just take it off the store, uncheck “Show in store” instead.)`)) return;
+      await api("/api/admin/products/" + f.id.value, { method: "DELETE" });
+      $("#editDialog").close(); toast("Deleted"); loadProducts();
+    }
+    else if (b.id === "logout") { await api("/api/admin/logout", { method: "POST" }); showLogin(); }
+  } catch (ex) { toast(ex.message); loadProducts(); }
+});
+
+document.addEventListener("input", e => {
+  if (e.target.id === "invSearch") { invQuery = e.target.value; renderInventory(); const s = $("#invSearch"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
+});
+
+document.addEventListener("submit", async e => {
+  const f = e.target, fid = f.getAttribute("id");  // f.id is shadowed by the hidden "id" input on editForm
+  if (fid === "loginForm") {
+    e.preventDefault();
+    try { await api("/api/admin/login", { method: "POST", body: JSON.stringify({ password: $("#pw").value }) }); boot(); }
+    catch (ex) { $("#loginError").textContent = ex.message; }
+  } else if (fid === "addForm") {
+    e.preventDefault();
+    try {
+      await api("/api/admin/products", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(f))) });
+      toast("Added " + f.name.value); f.reset(); await loadProducts(); $("#addForm [name=name]").focus();
+    } catch (ex) { $("#addError").textContent = ex.message; }
+  } else if (fid === "bulkForm") {
+    e.preventDefault();
+    const lines = f.lines.value.split("\n").map(l => l.trim()).filter(Boolean);
+    const rows = [], bad = [];
+    lines.forEach((l, i) => {
+      const [name, price, stock, ...cat] = l.split(",").map(s => s.trim());
+      const pr = Number((price || "").replace("$", ""));
+      if (!name || !price || isNaN(pr)) bad.push(i + 1);
+      else rows.push({ name, price: pr, stock: parseInt(stock) || 0, category: cat.join(", ") || "Other" });
+    });
+    if (bad.length) { $("#bulkError").textContent = `Check line ${bad.join(", ")} — needs at least a name and a price.`; return; }
+    let added = 0;
+    try {
+      for (const r of rows) { await api("/api/admin/products", { method: "POST", body: JSON.stringify(r) }); added++; }
+      toast(`Added ${added} item${added === 1 ? "" : "s"}`); f.reset();
+    } catch (ex) { $("#bulkError").textContent = `Added ${added}, then stopped: ${ex.message}`; f.lines.value = lines.slice(added).join("\n"); }
+    loadProducts();
+  } else if (fid === "editForm") {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f)); d.active = f.active.checked;
+    try {
+      await api("/api/admin/products/" + d.id, { method: "PATCH", body: JSON.stringify(d) });
+      $("#editDialog").close(); toast("Saved"); loadProducts();
+    } catch (ex) { $("#editError").textContent = ex.message; }
+  }
+});
+
+boot();
+setInterval(() => { if (tab === "orders" && !$("#logout").hidden) loadOrders(); }, 20000);
+</script>
+</body>
+</html>

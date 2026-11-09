@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Emporium</title>
+  <meta name="description" content="Order from the school store and pick it up.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <a class="logo" href="/"><b>The Emporium</b><span class="hide-sm">School Store</span></a>
+      <div class="spacer"></div>
+      <button class="btn small" id="lookupBtn">Check an order</button>
+      <button class="btn primary hide-sm" id="cartBtn">Cart <span class="badge" id="cartCount">0</span></button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Order ahead.<br>Grab it at the Emporium.</h1>
+      <p>Pick what you want, place your order, and we'll have it ready at the store. You pay when you pick it up.</p>
+    </section>
+
+    <input class="search" id="search" type="search" placeholder="Search snacks, supplies, merch…" aria-label="Search products">
+    <nav class="chips" id="chips" aria-label="Categories"></nav>
+    <section class="grid" id="grid" aria-live="polite"></section>
+  </main>
+
+  <footer class="site">The Emporium · Orders are paid at pickup · <a href="/admin">Staff</a></footer>
+
+  <button class="btn primary mobile-cart" id="mobileCart"><span>View cart · <b id="mobileCount">0</b></span><b id="mobileTotal">$0.00</b></button>
+
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Cart" aria-hidden="true">
+    <header><h2 id="drawerTitle">Your cart</h2><button class="btn small" id="closeDrawer" aria-label="Close">Close</button></header>
+    <div class="content" id="drawerContent"></div>
+    <footer id="drawerFooter"></footer>
+  </aside>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const money = c => "$" + (c / 100).toFixed(2);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+
+let products = [];
+let category = "All";
+let query = "";
+let cart = load("em_cart", {});          // { productId: qty }
+let view = "cart";                         // cart | checkout | done | lookup
+
+function load(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }
+function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+
+async function loadProducts() {
+  try {
+    products = (await api("/api/products")).products;
+  } catch (e) {
+    $("#grid").innerHTML = `<p class="empty">Couldn't load the store. ${esc(e.message)}</p>`;
+    return;
+  }
+  // drop cart items that no longer exist
+  for (const id of Object.keys(cart)) if (!products.find(p => p.id == id)) delete cart[id];
+  renderChips(); renderGrid(); renderCartBadge();
+}
+
+function renderChips() {
+  const cats = ["All", ...new Set(products.map(p => p.category))];
+  $("#chips").innerHTML = cats.map(c => `<button class="chip ${c === category ? "on" : ""}" data-cat="${esc(c)}">${esc(c)}</button>`).join("");
+}
+
+function stockLabel(p) {
+  if (p.stock <= 0) return `<span class="stock">Sold out</span>`;
+  if (p.stock <= 5) return `<span class="stock low">Only ${p.stock} left</span>`;
+  return `<span class="stock">${p.stock} in stock</span>`;
+}
+
+function renderGrid() {
+  const q = query.toLowerCase();
+  const list = products.filter(p =>
+    (category === "All" || p.category === category) &&
+    (!q || (p.name + " " + p.description + " " + p.category).toLowerCase().includes(q)));
+  if (!products.length) { $("#grid").innerHTML = `<p class="empty">Nothing on the shelves yet — check back soon.</p>`; return; }
+  if (!list.length) { $("#grid").innerHTML = `<p class="empty">No matches.</p>`; return; }
+  $("#grid").innerHTML = list.map(p => {
+    const qty = cart[p.id] || 0, out = p.stock <= 0;
+    const img = p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">` : esc(p.name.trim()[0] || "?");
+    const ctrl = out ? `<button class="btn small" disabled>Sold out</button>`
+      : qty ? `<div class="stepper"><button data-dec="${p.id}" aria-label="Remove one">−</button><span>${qty}</span><button data-inc="${p.id}" aria-label="Add one">+</button></div>`
+      : `<button class="btn small primary" data-inc="${p.id}">Add</button>`;
+    return `<article class="card ${out ? "out" : ""}">
+      <div class="img">${img}</div>
+      <div class="body">
+        <span class="cat">${esc(p.category)}</span>
+        <h3>${esc(p.name)}</h3>
+        ${p.description ? `<p class="desc">${esc(p.description)}</p>` : `<div style="flex:1"></div>`}
+        ${stockLabel(p)}
+        <div class="row"><span class="price">${money(p.price_cents)}</span>${ctrl}</div>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function cartLines() {
+  return Object.entries(cart).map(([id, qty]) => ({ p: products.find(p => p.id == id), qty })).filter(l => l.p);
+}
+function cartTotal() { return cartLines().reduce((s, l) => s + l.p.price_cents * l.qty, 0); }
+function cartCount() { return cartLines().reduce((s, l) => s + l.qty, 0); }
+
+function renderCartBadge() {
+  const n = cartCount();
+  $("#cartCount").textContent = n;
+  $("#mobileCount").textContent = n;
+  $("#mobileTotal").textContent = money(cartTotal());
+  $("#mobileCart").classList.toggle("show", n > 0 && !$("#drawer").classList.contains("open"));
+}
+
+function setQty(id, qty) {
+  const p = products.find(p => p.id == id);
+  if (!p) return;
+  if (qty > p.stock) { toast(`Only ${p.stock} available`); qty = p.stock; }
+  if (qty <= 0) delete cart[id]; else cart[id] = qty;
+  save("em_cart", cart);
+  renderGrid(); renderCartBadge();
+  if ($("#drawer").classList.contains("open") && view === "cart") renderDrawer();
+}
+
+function openDrawer(v = "cart") {
+  view = v; renderDrawer();
+  $("#drawer").classList.add("open"); $("#scrim").classList.add("open");
+  $("#drawer").setAttribute("aria-hidden", "false");
+  renderCartBadge();
+}
+function closeDrawer() {
+  $("#drawer").classList.remove("open"); $("#scrim").classList.remove("open");
+  $("#drawer").setAttribute("aria-hidden", "true");
+  renderCartBadge();
+}
+
+function renderDrawer() {
+  const c = $("#drawerContent"), f = $("#drawerFooter"), t = $("#drawerTitle");
+  if (view === "cart") {
+    t.textContent = "Your cart";
+    const lines = cartLines();
+    if (!lines.length) { c.innerHTML = `<p class="empty">Your cart is empty.</p>`; f.innerHTML = ""; return; }
+    c.innerHTML = lines.map(({ p, qty }) => `<div class="line">
+      <div class="n">${esc(p.name)}<small>${money(p.price_cents)} each</small></div>
+      <div class="stepper"><button data-dec="${p.id}">−</button><span>${qty}</span><button data-inc="${p.id}">+</button></div>
+    </div>`).join("");
+    f.innerHTML = `<div class="total"><span>Total</span><span>${money(cartTotal())}</span></div>
+      <span class="hint">You'll pay at the store when you pick up.</span>
+      <button class="btn primary block" id="toCheckout">Continue</button>`;
+  } else if (view === "checkout") {
+    t.textContent = "Pickup details";
+    const me = load("em_me", {});
+    c.innerHTML = `<form id="checkoutForm">
+      <div class="field"><label for="name">Your name</label><input id="name" name="name" required maxlength="80" autocomplete="name" value="${esc(me.name)}"></div>
+      <div class="field"><label for="contact">Grade / homeroom / email <span class="hint">(optional)</span></label><input id="contact" name="contact" maxlength="120" value="${esc(me.contact)}"></div>
+      <div class="field"><label for="note">Note for the store <span class="hint">(optional)</span></label><textarea id="note" name="note" maxlength="300" placeholder="e.g. I'll come by at lunch"></textarea></div>
+      <p class="error" id="checkoutError" role="alert"></p>
+    </form>`;
+    f.innerHTML = `<div class="total"><span>${cartCount()} item${cartCount() === 1 ? "" : "s"}</span><span>${money(cartTotal())}</span></div>
+      <button class="btn primary block" id="placeOrder" type="submit" form="checkoutForm">Place pickup order</button>
+      <button class="btn block" id="backToCart">Back to cart</button>`;
+  } else if (view === "done") {
+    const o = load("em_last_order", null);
+    t.textContent = "Order placed";
+    c.innerHTML = o ? `<div class="confirm">
+      <p>Thanks, ${esc(o.customer_name)}! Show this code at the Emporium:</p>
+      <div class="code">${esc(o.code)}</div>
+      <p class="hint">We'll get it ready. You can check its status any time with “Check an order”.</p>
+      ${o.items.map(i => `<div class="line"><div class="n">${esc(i.name)}</div><span>× ${i.qty}</span></div>`).join("")}
+      <div class="total" style="margin-top:12px"><span>Pay at pickup</span><span>${money(o.total_cents)}</span></div>
+    </div>` : "";
+    f.innerHTML = `<button class="btn primary block" id="doneBtn">Done</button>`;
+  } else if (view === "lookup") {
+    t.textContent = "Check an order";
+    const last = load("em_last_order", null);
+    c.innerHTML = `<form id="lookupForm">
+      <div class="field"><label for="code">Order code</label><input id="code" name="code" placeholder="EM-XXXXX" required value="${esc(last?.code)}" style="text-transform:uppercase"></div>
+      <button class="btn primary block">Check status</button>
+    </form><div id="lookupResult" style="margin-top:16px"></div>`;
+    f.innerHTML = "";
+  }
+}
+
+const STATUS_TEXT = { new: "Received — we're getting it ready", ready: "Ready for pickup!", picked_up: "Picked up", cancelled: "Cancelled" };
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button, [data-cat]");
+  if (!t) return;
+  if (t.dataset.inc) setQty(t.dataset.inc, (cart[t.dataset.inc] || 0) + 1);
+  else if (t.dataset.dec) setQty(t.dataset.dec, (cart[t.dataset.dec] || 0) - 1);
+  else if (t.dataset.cat) { category = t.dataset.cat; renderChips(); renderGrid(); }
+  else if (t.id === "cartBtn" || t.id === "mobileCart") openDrawer("cart");
+  else if (t.id === "lookupBtn") openDrawer("lookup");
+  else if (t.id === "closeDrawer" || t.id === "doneBtn") closeDrawer();
+  else if (t.id === "toCheckout") { view = "checkout"; renderDrawer(); }
+  else if (t.id === "backToCart") { view = "cart"; renderDrawer(); }
+});
+$("#scrim").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+$("#search").addEventListener("input", e => { query = e.target.value; renderGrid(); });
+
+document.addEventListener("submit", async e => {
+  e.preventDefault();
+  if (e.target.id === "checkoutForm") {
+    const btn = $("#placeOrder"), err = $("#checkoutError");
+    const fd = Object.fromEntries(new FormData(e.target));
+    save("em_me", { name: fd.name, contact: fd.contact });
+    btn.disabled = true; btn.textContent = "Placing order…"; err.textContent = "";
+    try {
+      const { order } = await api("/api/orders", { method: "POST", body: JSON.stringify({
+        ...fd, items: cartLines().map(l => ({ id: l.p.id, qty: l.qty })) }) });
+      save("em_last_order", order);
+      cart = {}; save("em_cart", cart);
+      view = "done"; renderDrawer();
+      loadProducts();
+    } catch (ex) {
+      err.textContent = ex.message;
+      btn.disabled = false; btn.textContent = "Place pickup order";
+      loadProducts();
+    }
+  } else if (e.target.id === "lookupForm") {
+    const code = e.target.code.value.trim().toUpperCase(), out = $("#lookupResult");
+    out.innerHTML = `<p class="hint">Looking…</p>`;
+    try {
+      const { order: o } = await api("/api/orders/" + encodeURIComponent(code));
+      out.innerHTML = `<p><span class="status-pill s-${o.status}">${o.status.replace("_", " ")}</span></p>
+        <h3 style="margin:8px 0">${STATUS_TEXT[o.status]}</h3>
+        ${o.items.map(i => `<div class="line"><div class="n">${esc(i.name)}</div><span>× ${i.qty}</span></div>`).join("")}
+        <div class="total" style="margin-top:12px"><span>Total</span><span>${money(o.total_cents)}</span></div>`;
+    } catch (ex) { out.innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
+  }
+});
+
+loadProducts();
+setInterval(loadProducts, 60000);
+</script>
+</body>
+</html>

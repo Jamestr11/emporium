@@ -1,0 +1,4 @@
+[
+  { "name": "Sample Item — replace me", "category": "Snacks", "price": 1.50, "stock": 20, "description": "Placeholder until the real list is added." },
+  { "name": "Sample Hoodie — replace me", "category": "Merch", "price": 25.00, "stock": 5, "description": "Placeholder until the real list is added." }
+]
