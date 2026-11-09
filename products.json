@@ -1,4 +1,182 @@
 [
-  { "name": "Sample Item — replace me", "category": "Snacks", "price": 1.50, "stock": 20, "description": "Placeholder until the real list is added." },
-  { "name": "Sample Hoodie — replace me", "category": "Merch", "price": 25.00, "stock": 5, "description": "Placeholder until the real list is added." }
+  {
+    "name": "Sour Strips Wild Cherry",
+    "price": 3,
+    "stock": 1,
+    "category": "Candy"
+  },
+  {
+    "name": "Sour Strips Strawberry",
+    "price": 3,
+    "stock": 2,
+    "category": "Candy"
+  },
+  {
+    "name": "Sour Drops Watermelon",
+    "price": 6,
+    "stock": 1,
+    "category": "Candy"
+  },
+  {
+    "name": "Sour Drops Peach",
+    "price": 6,
+    "stock": 1,
+    "category": "Candy"
+  },
+  {
+    "name": "theFube fidget cube",
+    "price": 12,
+    "stock": 1,
+    "category": "Fidgets & Toys"
+  },
+  {
+    "name": "Mini fidget toy",
+    "price": 7,
+    "stock": 1,
+    "category": "Fidgets & Toys"
+  },
+  {
+    "name": "NeeDoh Gumdrop",
+    "price": 5,
+    "stock": 1,
+    "category": "Fidgets & Toys"
+  },
+  {
+    "name": "Gummy bear squishy (NeeDoh dupe)",
+    "price": 8,
+    "stock": 1,
+    "category": "Fidgets & Toys"
+  },
+  {
+    "name": "Foam baseball",
+    "price": 1,
+    "stock": 1,
+    "category": "Fidgets & Toys"
+  },
+  {
+    "name": "How to Make the Best Coffee at Home (book)",
+    "price": 22,
+    "stock": 1,
+    "category": "Books"
+  },
+  {
+    "name": "The Master Guide to Drawing Anime (book)",
+    "price": 21,
+    "stock": 1,
+    "category": "Books"
+  },
+  {
+    "name": "100 Cookies (book)",
+    "price": 30,
+    "stock": 1,
+    "category": "Books"
+  },
+  {
+    "name": "Sketch book",
+    "price": 9,
+    "stock": 1,
+    "category": "Art & Crafts"
+  },
+  {
+    "name": "Clay bead bracelet kit",
+    "price": 12,
+    "stock": 1,
+    "category": "Art & Crafts"
+  },
+  {
+    "name": "Owala FreeSip pink",
+    "price": 29,
+    "stock": 1,
+    "category": "Drinkware"
+  },
+  {
+    "name": "Owala FreeSip white",
+    "price": 29,
+    "stock": 1,
+    "category": "Drinkware"
+  },
+  {
+    "name": "Google Fitbit Air",
+    "price": 99,
+    "stock": 1,
+    "category": "Tech"
+  },
+  {
+    "name": "JBL GO 4 speaker",
+    "price": 49,
+    "stock": 1,
+    "category": "Tech"
+  },
+  {
+    "name": "VEGER power bank",
+    "price": 23,
+    "stock": 1,
+    "category": "Tech"
+  },
+  {
+    "name": "AirPods Pro (used)",
+    "price": 160,
+    "stock": 1,
+    "category": "Tech"
+  },
+  {
+    "name": "Supreme Mini Mics (Set of 2, phone plug-in)",
+    "price": 48,
+    "stock": 0,
+    "category": "Tech"
+  },
+  {
+    "name": "Jellycat macaron plush",
+    "price": 25,
+    "stock": 1,
+    "category": "Plush & Collectibles"
+  },
+  {
+    "name": "Smiski house display",
+    "price": 28,
+    "stock": 1,
+    "category": "Plush & Collectibles"
+  },
+  {
+    "name": "Emotional Support Pals plush",
+    "price": 17,
+    "stock": 1,
+    "category": "Plush & Collectibles"
+  },
+  {
+    "name": "Parfums de Marly Feminine Discovery Selection (3x5ml)",
+    "price": 75,
+    "stock": 1,
+    "category": "Fragrance"
+  },
+  {
+    "name": "Parfums de Marly Feminine Discovery Set (7x1.5ml)",
+    "price": 55,
+    "stock": 1,
+    "category": "Fragrance"
+  },
+  {
+    "name": "Parfums de Marly Masculine Discovery Set (7x1.5ml)",
+    "price": 55,
+    "stock": 1,
+    "category": "Fragrance"
+  },
+  {
+    "name": "World Cup Trionda mini ball",
+    "price": 18,
+    "stock": 1,
+    "category": "Sports"
+  },
+  {
+    "name": "Ray-Ban Meta Wayfarer Gen 2 (matte black, Transitions)",
+    "price": 243,
+    "stock": 1,
+    "category": "Eyewear"
+  },
+  {
+    "name": "Ray-Ban Round Metal (gold, pink mirror)",
+    "price": 218,
+    "stock": 1,
+    "category": "Eyewear"
+  }
 ]
