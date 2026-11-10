@@ -12,7 +12,7 @@ Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install 
 - **Add by name (easiest):** on the staff page → Inventory, type the product (e.g. "JBL Go 4 speaker black") or paste a link and press **Find it**. Claude searches the web and drafts the listing — name, short description, category, the usual retail price, and a few product photos. Pick the best photo, set your price and stock, and press **Add to store**.
   Needs an Anthropic API key: staff page → **Settings** → paste it (get one at console.anthropic.com and add a little credit). Each lookup costs roughly 10–30¢. The key is stored on the server and never shown again; `ANTHROPIC_API_KEY` in the environment works too.
 - **Photos for existing items:** Edit → **✨ Find photo for me** (uses the same lookup), or **Search images myself** → right-click a picture → Copy image → **Paste photo**. **Take or choose photo** uploads from the phone camera or files. Product shots on a white background look best.
-- **Add an item yourself / Add many at once** still work without any key.
+- **Add an item yourself / Add many at once:** with an AI key saved, each item you add gets a product photo found automatically (one at a time, in the background). Without a key they still work; add photos with Edit.
 
 Every item shows on a white photo tile that floats gently and tilts toward the mouse. The starting photos for the original 30 items live in `static/products/` and load automatically on a fresh install.
 

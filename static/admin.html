@@ -196,7 +196,7 @@ async function boot() {
   if (!signed_in) return showLogin();
   $("#logout").hidden = false; $("#pwBtn").hidden = false; $("#settingsBtn").hidden = false;
   renderShell();
-  await Promise.all([loadOrders(), loadProducts()]);
+  await Promise.all([loadOrders(), loadProducts(), refreshAiKey()]);
 }
 
 function renderShell() {
@@ -347,6 +347,43 @@ async function saveDraft() {
   }
 }
 
+// ---- automatic photos for items added by hand ----
+// After an item is added (one at a time or many at once), look it up and attach the first
+// product photo that downloads. Runs one item at a time in the background.
+let aiKeySet = false;
+async function refreshAiKey() {
+  try { aiKeySet = (await api("/api/admin/settings")).ai_key_set; } catch { aiKeySet = false; }
+  if (tab === "inventory") renderInventory();
+}
+const photoQueue = []; let photoWorking = null;
+function queueAutoPhoto(product) {
+  if (!aiKeySet) return;
+  photoQueue.push(product); renderPhotoQueue();
+  if (!photoWorking) drainPhotoQueue();
+}
+async function drainPhotoQueue() {
+  while (photoQueue.length) {
+    photoWorking = photoQueue.shift(); renderPhotoQueue();
+    const p = photoWorking;
+    try {
+      const { listing } = await api("/api/admin/lookup", { method: "POST", body: JSON.stringify({ query: [p.name, p.category].filter(Boolean).join(" — ") }) });
+      let saved = false;
+      for (const url of listing.image_urls) {
+        const blob = await loadRemoteImage(url);
+        if (blob) { await processPhoto(p.id, blob); saved = true; break; }
+      }
+      if (!saved) toast(`No photo found for ${p.name} — add one with Edit`);
+    } catch (ex) { toast(`Photo for ${p.name}: ${ex.message}`); }
+  }
+  photoWorking = null; renderPhotoQueue();
+}
+function renderPhotoQueue() {
+  const el = $("#photoQueue"); if (!el) return;
+  const n = photoQueue.length + (photoWorking ? 1 : 0);
+  el.hidden = !n;
+  el.textContent = n ? `✨ Finding photos… ${photoWorking ? `now: ${photoWorking.name}` : ""}${photoQueue.length ? ` (${photoQueue.length} more waiting)` : ""}` : "";
+}
+
 // ---- Settings (AI key) ----
 async function openSettings() {
   $("#settingsError").textContent = ""; $("#settingsForm").reset();
@@ -368,6 +405,7 @@ function renderInventory() {
     ${renderAuto()}
     <section class="panel">
       <h2>Add an item yourself</h2>
+      <p class="hint" style="margin-top:-6px">${aiKeySet ? "✨ A product photo is found automatically after you add it." : "Tip: add an AI key in Settings and photos will be found automatically."}</p>
       <form id="addForm">
         <div class="grid2">
           <div class="field"><label>Name</label><input name="name" required maxlength="120" placeholder="Hot Cheetos"></div>
@@ -381,6 +419,7 @@ function renderInventory() {
       </form>
     </section>
     <section class="panel">
+      <p class="hint" id="photoQueue" style="color:var(--brand);font-weight:600" hidden></p>
       <h2>Add many at once</h2>
       <p class="hint" style="margin-top:-6px">One item per line: <b>name, price, stock, category</b> — e.g. <code>Gatorade, 2.00, 24, Drinks</code></p>
       <form id="bulkForm">
@@ -405,6 +444,7 @@ function renderInventory() {
           <td class="num"><button class="btn small" data-edit="${p.id}">Edit</button></td>
         </tr>`).join("")}</tbody></table>` : `<p class="empty">${products.length ? "No matches." : "No items yet — add your first one above."}</p>`}
     </section>`;
+  renderPhotoQueue();
 }
 
 function openEdit(p) {
@@ -557,7 +597,7 @@ document.addEventListener("click", async e => {
     else if (b.id === "removeKey") {
       if (!confirm("Remove the saved AI key? “Add by name” will stop working until you add one again.")) return;
       await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: "" }) });
-      toast("AI key removed"); openSettings();
+      toast("AI key removed"); openSettings(); refreshAiKey();
     }
     else if (b.id === "pastePhoto") pasteFromClipboard();
 
@@ -601,7 +641,7 @@ document.addEventListener("submit", async e => {
     e.preventDefault();
     try {
       await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: f.key.value.trim() }) });
-      toast("AI key saved"); $("#settingsDialog").close();
+      toast("AI key saved"); $("#settingsDialog").close(); refreshAiKey();
     } catch (ex) { $("#settingsError").textContent = ex.message; }
     return;
   } else if (fid === "setupForm") {
@@ -621,8 +661,9 @@ document.addEventListener("submit", async e => {
   } else if (fid === "addForm") {
     e.preventDefault();
     try {
-      await api("/api/admin/products", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(f))) });
-      toast("Added " + f.name.value); f.reset(); await loadProducts(); $("#addForm [name=name]").focus();
+      const { product } = await api("/api/admin/products", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(f))) });
+      toast("Added " + product.name); f.reset(); await loadProducts(); $("#addForm [name=name]").focus();
+      queueAutoPhoto(product);
     } catch (ex) { $("#addError").textContent = ex.message; }
   } else if (fid === "bulkForm") {
     e.preventDefault();
@@ -637,7 +678,10 @@ document.addEventListener("submit", async e => {
     if (bad.length) { $("#bulkError").textContent = `Check line ${bad.join(", ")} — needs at least a name and a price.`; return; }
     let added = 0;
     try {
-      for (const r of rows) { await api("/api/admin/products", { method: "POST", body: JSON.stringify(r) }); added++; }
+      for (const r of rows) {
+        const { product } = await api("/api/admin/products", { method: "POST", body: JSON.stringify(r) }); added++;
+        queueAutoPhoto(product);
+      }
       toast(`Added ${added} item${added === 1 ? "" : "s"}`); f.reset();
     } catch (ex) { $("#bulkError").textContent = `Added ${added}, then stopped: ${ex.message}`; f.lines.value = lines.slice(added).join("\n"); }
     loadProducts();
