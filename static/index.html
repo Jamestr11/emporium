@@ -16,7 +16,7 @@
     <div class="wrap">
       <a class="logo" href="/"><b>The Emporium</b><span class="hide-sm">School Store</span></a>
       <div class="spacer"></div>
-      <button class="btn small" id="lookupBtn">Check an order</button>
+      <div id="account"></div>
       <button class="btn primary hide-sm" id="cartBtn">Cart <span class="badge" id="cartCount">0</span></button>
     </div>
   </header>
@@ -24,7 +24,7 @@
   <main class="wrap">
     <section class="hero">
       <h1>Order ahead.<br>Grab it at the Emporium.</h1>
-      <p>Pick what you want, place your order, and we'll have it ready at the store. You pay when you pick it up.</p>
+      <p>Sign in with your school Google account, pick what you want, and pay with your Emporium balance. We'll have it ready at the store.</p>
     </section>
 
     <input class="search" id="search" type="search" placeholder="Search candy, tech, books, plushies…" aria-label="Search products">
@@ -32,7 +32,7 @@
     <section class="grid" id="grid" aria-live="polite"></section>
   </main>
 
-  <footer class="site">The Emporium · Orders are paid at pickup · <a href="/admin">Staff</a></footer>
+  <footer class="site">The Emporium · Pay with your Emporium balance · <a href="/admin">Staff</a></footer>
 
   <button class="btn primary mobile-cart" id="mobileCart"><span>View cart · <b id="mobileCount">0</b></span><b id="mobileTotal">$0.00</b></button>
 
@@ -49,28 +49,34 @@
 const $ = s => document.querySelector(s);
 const money = c => "$" + (c / 100).toFixed(2);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const when = t => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 let products = [];
 let category = "All";
 let query = "";
 let cart = load("em_cart", {});          // { productId: qty }
-let view = "cart";                         // cart | checkout | done | lookup
+let view = "cart";                         // cart | checkout | done | account | signin
+let me = null;                             // signed-in student, or null
+let config = { google_client_id: "", student_domain: "alpha.school" };
+let lastOrder = null, myOrders = [];
 
 function load(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }
 function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 1800);
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2600);
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, credentials: "same-origin", ...opts });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && me) { me = null; renderAccount(); }
   if (!res.ok) throw new Error(data.error || "Something went wrong.");
   return data;
 }
 
+// ---------- products ----------
 async function loadProducts() {
   try {
     products = (await api("/api/products")).products;
@@ -78,7 +84,6 @@ async function loadProducts() {
     $("#grid").innerHTML = `<p class="empty">Couldn't load the store. ${esc(e.message)}</p>`;
     return;
   }
-  // drop cart items that no longer exist
   for (const id of Object.keys(cart)) if (!products.find(p => p.id == id)) delete cart[id];
   renderChips(); renderGrid(); renderCartBadge();
 }
@@ -124,6 +129,7 @@ function renderGrid() {
   }).join("");
 }
 
+// ---------- cart ----------
 function cartLines() {
   return Object.entries(cart).map(([id, qty]) => ({ p: products.find(p => p.id == id), qty })).filter(l => l.p);
 }
@@ -148,6 +154,69 @@ function setQty(id, qty) {
   if ($("#drawer").classList.contains("open") && view === "cart") renderDrawer();
 }
 
+// ---------- account (Sign in with Google) ----------
+async function loadMe() {
+  try { me = (await api("/api/me")).student; } catch { me = null; }
+  renderAccount();
+}
+
+function renderAccount() {
+  const el = $("#account");
+  if (!me) {
+    el.innerHTML = `<button class="btn small" id="signinBtn">Sign in</button>`;
+  } else {
+    const first = (me.name || me.email).split(" ")[0];
+    const avatar = me.picture ? `<img class="avatar" src="${esc(me.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar">${esc(first[0] || "?")}</span>`;
+    el.innerHTML = `<button class="btn small acct" id="accountBtn" aria-label="Your account">${avatar}<span class="hide-sm">${esc(first)}</span><span class="bal">${money(me.balance_cents)}</span></button>`;
+  }
+  if ($("#drawer").classList.contains("open") && ["checkout", "account", "signin"].includes(view)) renderDrawer();
+}
+
+let gsiLoading = null;
+function loadGoogle() {
+  return gsiLoading ??= new Promise((ok, fail) => {
+    const sc = Object.assign(document.createElement("script"), { src: "https://accounts.google.com/gsi/client", async: true });
+    sc.onload = () => {
+      google.accounts.id.initialize({ client_id: config.google_client_id, callback: onGoogleCredential, hd: config.student_domain, ux_mode: "popup", auto_select: false });
+      ok();
+    };
+    sc.onerror = () => { gsiLoading = null; fail(new Error("Couldn't load Google sign-in.")); };
+    document.head.append(sc);
+  });
+}
+
+async function renderGoogleButton() {
+  const box = $("#gsiButton"); if (!box) return;
+  if (!config.google_client_id) { box.innerHTML = `<p class="hint">Student sign-in isn't set up yet — ask the Emporium staff.</p>`; return; }
+  try {
+    await loadGoogle();
+    google.accounts.id.renderButton(box, { theme: "outline", size: "large", text: "signin_with", shape: "pill", width: 280 });
+  } catch (ex) { box.innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
+}
+
+async function onGoogleCredential(resp) {
+  try {
+    me = (await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) })).student;
+    toast(`Signed in as ${me.email}`);
+    renderAccount();
+    if (view === "signin") { view = cartCount() ? "checkout" : "account"; if (view === "account") await loadMyOrders(); renderDrawer(); }
+  } catch (ex) {
+    toast(ex.message);
+    const err = $("#signinError"); if (err) err.textContent = ex.message;
+  }
+}
+
+async function signOut() {
+  await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+  try { google.accounts.id.disableAutoSelect(); } catch {}
+  me = null; myOrders = []; renderAccount(); closeDrawer(); toast("Signed out");
+}
+
+async function loadMyOrders() {
+  try { myOrders = (await api("/api/me/orders")).orders; } catch { myOrders = []; }
+}
+
+// ---------- drawer ----------
 function openDrawer(v = "cart") {
   view = v; renderDrawer();
   $("#drawer").classList.add("open"); $("#scrim").classList.add("open");
@@ -160,6 +229,9 @@ function closeDrawer() {
   renderCartBadge();
 }
 
+const STATUS_TEXT = { new: "Received — we're getting it ready", ready: "Ready for pickup!", picked_up: "Picked up", cancelled: "Cancelled — refunded to your balance" };
+const STATUS_LABEL = { new: "New", ready: "Ready", picked_up: "Picked up", cancelled: "Cancelled" };
+
 function renderDrawer() {
   const c = $("#drawerContent"), f = $("#drawerFooter"), t = $("#drawerTitle");
   if (view === "cart") {
@@ -171,44 +243,65 @@ function renderDrawer() {
       <div class="stepper"><button data-dec="${p.id}">−</button><span>${qty}</span><button data-inc="${p.id}">+</button></div>
     </div>`).join("");
     f.innerHTML = `<div class="total"><span>Total</span><span>${money(cartTotal())}</span></div>
-      <span class="hint">You'll pay at the store when you pick up.</span>
       <button class="btn primary block" id="toCheckout">Continue</button>`;
+  } else if (view === "signin") {
+    t.textContent = "Sign in";
+    c.innerHTML = `<div class="confirm">
+      <p>Sign in with your <b>@${esc(config.student_domain)}</b> Google account to order and see your balance.</p>
+      <div id="gsiButton" class="gsi"></div>
+      <p class="error" id="signinError" role="alert"></p>
+      <p class="hint">Your first sign-in creates your Emporium account.</p>
+    </div>`;
+    f.innerHTML = cartCount() ? `<button class="btn block" id="backToCart">Back to cart</button>` : "";
+    renderGoogleButton();
   } else if (view === "checkout") {
-    t.textContent = "Pickup details";
-    const me = load("em_me", {});
+    if (!me) { view = "signin"; return renderDrawer(); }
+    t.textContent = "Checkout";
+    const total = cartTotal(), after = me.balance_cents - total, short = after < 0;
     c.innerHTML = `<form id="checkoutForm">
-      <div class="field"><label for="name">Your name</label><input id="name" name="name" required maxlength="80" autocomplete="name" value="${esc(me.name)}"></div>
-      <div class="field"><label for="contact">Grade / homeroom / email <span class="hint">(optional)</span></label><input id="contact" name="contact" maxlength="120" value="${esc(me.contact)}"></div>
+      ${cartLines().map(({ p, qty }) => `<div class="line"><div class="n">${esc(p.name)}</div><span>${qty} × ${money(p.price_cents)}</span></div>`).join("")}
+      <div class="sums">
+        <div><span>Your balance</span><span>${money(me.balance_cents)}</span></div>
+        <div><span>This order</span><span>− ${money(total)}</span></div>
+        <div class="${short ? "neg" : ""}"><b>Balance after</b><b>${short ? "Not enough" : money(after)}</b></div>
+      </div>
+      ${short ? `<p class="error">You need ${money(-after)} more. Ask the Emporium staff to add money to your account, or remove something from your cart.</p>` : ""}
       <div class="field"><label for="note">Note for the store <span class="hint">(optional)</span></label><textarea id="note" name="note" maxlength="300" placeholder="e.g. I'll come by at lunch"></textarea></div>
       <p class="error" id="checkoutError" role="alert"></p>
     </form>`;
-    f.innerHTML = `<div class="total"><span>${cartCount()} item${cartCount() === 1 ? "" : "s"}</span><span>${money(cartTotal())}</span></div>
-      <button class="btn primary block" id="placeOrder" type="submit" form="checkoutForm">Place pickup order</button>
+    f.innerHTML = `<button class="btn primary block" id="placeOrder" type="submit" form="checkoutForm" ${short ? "disabled" : ""}>Pay ${money(total)} from balance</button>
       <button class="btn block" id="backToCart">Back to cart</button>`;
   } else if (view === "done") {
-    const o = load("em_last_order", null);
+    const o = lastOrder;
     t.textContent = "Order placed";
     c.innerHTML = o ? `<div class="confirm">
-      <p>Thanks, ${esc(o.customer_name)}! Show this code at the Emporium:</p>
+      <p>Thanks, ${esc((me?.name || "").split(" ")[0] || "friend")}! Show this code at the Emporium:</p>
       <div class="code">${esc(o.code)}</div>
-      <p class="hint">We'll get it ready. You can check its status any time with “Check an order”.</p>
+      <p class="hint">We'll get it ready. You'll see when it's ready under your account.</p>
       ${o.items.map(i => `<div class="line"><div class="n">${esc(i.name)}</div><span>× ${i.qty}</span></div>`).join("")}
-      <div class="total" style="margin-top:12px"><span>Pay at pickup</span><span>${money(o.total_cents)}</span></div>
+      <div class="total" style="margin-top:12px"><span>Paid from balance</span><span>${money(o.total_cents)}</span></div>
+      <p class="hint" style="margin-top:6px">Balance left: <b>${money(me?.balance_cents ?? 0)}</b></p>
     </div>` : "";
     f.innerHTML = `<button class="btn primary block" id="doneBtn">Done</button>`;
-  } else if (view === "lookup") {
-    t.textContent = "Check an order";
-    const last = load("em_last_order", null);
-    c.innerHTML = `<form id="lookupForm">
-      <div class="field"><label for="code">Order code</label><input id="code" name="code" placeholder="EM-XXXXX" required value="${esc(last?.code)}" style="text-transform:uppercase"></div>
-      <button class="btn primary block">Check status</button>
-    </form><div id="lookupResult" style="margin-top:16px"></div>`;
-    f.innerHTML = "";
+  } else if (view === "account") {
+    if (!me) { view = "signin"; return renderDrawer(); }
+    t.textContent = "Your account";
+    c.innerHTML = `<div class="acct-card">
+        <div><b>${esc(me.name || me.email)}</b><small>${esc(me.email)}</small></div>
+        <div class="bal-big"><small>Balance</small>${money(me.balance_cents)}</div>
+      </div>
+      <p class="hint">To add money, give cash to the Emporium staff and they'll put it on your account.</p>
+      <h3 style="margin:18px 0 6px">Your orders</h3>
+      ${myOrders.length ? myOrders.map(o => `<div class="my-order">
+          <div class="mo-head"><b>${esc(o.code)}</b><span class="status-pill s-${o.status}">${STATUS_LABEL[o.status]}</span><span class="spacer"></span><b>${money(o.total_cents)}</b></div>
+          <div class="hint">${esc(STATUS_TEXT[o.status])} · ${when(o.created_at)}</div>
+          <div class="mo-items">${o.items.map(i => `${i.qty}× ${esc(i.name)}`).join(" · ")}</div>
+        </div>`).join("") : `<p class="hint">No orders yet.</p>`}`;
+    f.innerHTML = `<button class="btn block" id="signOutBtn">Sign out</button>`;
   }
 }
 
-const STATUS_TEXT = { new: "Received — we're getting it ready", ready: "Ready for pickup!", picked_up: "Picked up", cancelled: "Cancelled" };
-
+// ---------- events ----------
 document.addEventListener("click", async e => {
   const t = e.target.closest("button, [data-cat]");
   if (!t) return;
@@ -216,12 +309,37 @@ document.addEventListener("click", async e => {
   else if (t.dataset.dec) setQty(t.dataset.dec, (cart[t.dataset.dec] || 0) - 1);
   else if (t.dataset.cat) { category = t.dataset.cat; renderChips(); renderGrid(); }
   else if (t.id === "cartBtn" || t.id === "mobileCart") openDrawer("cart");
-  else if (t.id === "lookupBtn") openDrawer("lookup");
+  else if (t.id === "signinBtn") openDrawer("signin");
+  else if (t.id === "accountBtn") { openDrawer("account"); await Promise.all([loadMyOrders(), loadMe()]); if (view === "account") renderDrawer(); }
+  else if (t.id === "signOutBtn") signOut();
   else if (t.id === "closeDrawer" || t.id === "doneBtn") closeDrawer();
-  else if (t.id === "toCheckout") { view = "checkout"; renderDrawer(); }
+  else if (t.id === "toCheckout") { view = me ? "checkout" : "signin"; renderDrawer(); if (me) loadMe(); }
   else if (t.id === "backToCart") { view = "cart"; renderDrawer(); }
 });
 $("#scrim").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+$("#search").addEventListener("input", e => { query = e.target.value; renderGrid(); });
+
+document.addEventListener("submit", async e => {
+  if (e.target.id !== "checkoutForm") return;
+  e.preventDefault();
+  const btn = $("#placeOrder"), err = $("#checkoutError");
+  btn.disabled = true; btn.textContent = "Placing order…"; err.textContent = "";
+  try {
+    const res = await api("/api/orders", { method: "POST", body: JSON.stringify({
+      note: e.target.note.value, items: cartLines().map(l => ({ id: l.p.id, qty: l.qty })) }) });
+    lastOrder = res.order;
+    if (me) me.balance_cents = res.balance_cents;
+    cart = {}; save("em_cart", cart);
+    renderAccount();
+    view = "done"; renderDrawer();
+    loadProducts();
+  } catch (ex) {
+    err.textContent = ex.message;
+    btn.disabled = false; btn.textContent = `Pay ${money(cartTotal())} from balance`;
+    loadProducts(); loadMe();
+  }
+});
 
 // ---- 3D tilt: the item leans toward the pointer ----
 const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -237,8 +355,11 @@ document.addEventListener("pointermove", e => {
   st.style.setProperty("--rx", (-y * 20).toFixed(1) + "deg");
 });
 
-
-loadProducts();
+(async () => {
+  try { config = await api("/api/config"); } catch {}
+  renderAccount();
+  await Promise.all([loadProducts(), loadMe()]);
+})();
 setInterval(loadProducts, 60000);
 </script>
 </body>

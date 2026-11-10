@@ -18,7 +18,6 @@ import secrets
 import sqlite3
 import threading
 import time
-from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -38,6 +37,12 @@ PORT = int(os.environ.get("PORT", "8000"))
 ENV_ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD") or None
 SESSION_HOURS = 12
 ORDER_STATUSES = ("new", "ready", "picked_up", "cancelled")
+
+# Student accounts: Sign in with Google, limited to the school's email domain.
+STUDENT_DOMAIN = os.environ.get("STUDENT_EMAIL_DOMAIN", "alpha.school").lower().lstrip("@")
+STUDENT_SESSION_DAYS = 30
+GOOGLE_TOKENINFO_URL = os.environ.get("GOOGLE_TOKENINFO_URL", "https://oauth2.googleapis.com/tokeninfo")
+MAX_BALANCE_CENTS = 100_000  # $1,000 cap guards against typos when staff add money
 
 # Writes are serialized with db_lock so stock checks and decrements can't interleave.
 db_lock = threading.Lock()
@@ -106,6 +111,26 @@ def init_db():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                google_sub TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                picture TEXT NOT NULL DEFAULT '',
+                balance_cents INTEGER NOT NULL DEFAULT 0 CHECK (balance_cents >= 0),
+                created_at REAL NOT NULL,
+                last_login REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                delta_cents INTEGER NOT NULL,
+                balance_after INTEGER NOT NULL,
+                kind TEXT NOT NULL,            -- deposit | order | refund | adjust
+                order_id INTEGER,
+                note TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS order_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -116,6 +141,8 @@ def init_db():
             );
             """
         )
+        if "student_id" not in {r["name"] for r in DB.execute("PRAGMA table_info(orders)")}:
+            DB.execute("ALTER TABLE orders ADD COLUMN student_id INTEGER REFERENCES students(id)")
         count = DB.execute("SELECT COUNT(*) FROM products").fetchone()[0]
         seed = ROOT / "products.json"
         if count == 0 and seed.exists():
@@ -169,7 +196,31 @@ def order_dict(row, include_contact=False):
     if include_contact:
         d["customer_contact"] = row["customer_contact"]
         d["note"] = row["note"]
+        d["student_id"] = row["student_id"]
     return d
+
+
+def student_dict(row):
+    return {
+        "id": row["id"], "email": row["email"], "name": row["name"], "picture": row["picture"],
+        "balance_cents": row["balance_cents"], "created_at": row["created_at"], "last_login": row["last_login"],
+    }
+
+
+def move_balance(student_id, delta, kind, note="", order_id=None):
+    """Change a balance and record why. Call inside `with db_lock, DB:`. Never goes below zero."""
+    row = DB.execute("SELECT balance_cents FROM students WHERE id=?", (student_id,)).fetchone()
+    if not row:
+        raise ApiError(404, "Student not found.")
+    new = row["balance_cents"] + delta
+    if new < 0:
+        raise ApiError(409, "Not enough balance.")
+    if new > MAX_BALANCE_CENTS:
+        raise ApiError(400, f"Balances are capped at ${MAX_BALANCE_CENTS // 100}.")
+    DB.execute("UPDATE students SET balance_cents=? WHERE id=?", (new, student_id))
+    DB.execute("INSERT INTO ledger (student_id, delta_cents, balance_after, kind, order_id, note, created_at) VALUES (?,?,?,?,?,?,?)",
+               (student_id, delta, new, kind, order_id, note, time.time()))
+    return new
 
 
 def new_code():
@@ -239,6 +290,27 @@ def valid_session(token):
         return False
     exp, sig = token.split(".", 1)
     return hmac.compare_digest(sig, sign(exp)) and exp.isdigit() and int(exp) > time.time()
+
+
+def sign_student(value):
+    return hmac.new((secret_key() + ":student").encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def make_student_session(student_id):
+    value = f"{student_id}.{int(time.time() + STUDENT_SESSION_DAYS * 86400)}"
+    return value + "." + sign_student(value)
+
+
+def student_from_token(token):
+    try:
+        sid, exp, sig = token.split(".")
+    except (AttributeError, ValueError):
+        return None
+    if not (sid.isdigit() and exp.isdigit()) or int(exp) < time.time():
+        return None
+    if not hmac.compare_digest(sig, sign_student(f"{sid}.{exp}")):
+        return None
+    return DB.execute("SELECT * FROM students WHERE id=?", (int(sid),)).fetchone()
 
 
 class ApiError(Exception):
@@ -334,13 +406,32 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Expected a JSON object.")
         return data
 
+    def cookie(self, name):
+        # Read one cookie by hand. http.cookies.SimpleCookie gives up on the whole header when any
+        # cookie has characters it dislikes (Google's sign-in sets one full of JSON), which would
+        # silently sign everyone out.
+        for part in self.headers.get("Cookie", "").split(";"):
+            key, sep, value = part.strip().partition("=")
+            if sep and key == name:
+                return value.strip().strip('"')
+        return None
+
     def is_admin(self):
-        jar = cookies.SimpleCookie(self.headers.get("Cookie", ""))
-        return valid_session(jar["em_session"].value if "em_session" in jar else None)
+        return valid_session(self.cookie("em_session"))
 
     def require_admin(self):
         if not self.is_admin():
             raise ApiError(401, "Please sign in.")
+
+    def student(self):
+        token = self.cookie("em_student")
+        return student_from_token(token) if token else None
+
+    def require_student(self):
+        st = self.student()
+        if not st:
+            raise ApiError(401, "Sign in with your school Google account to order.")
+        return st
 
     def serve_static(self, path):
         if path.startswith("/uploads/"):
@@ -419,9 +510,9 @@ def get_products(h, q):
 
 
 def create_order(h, q):
+    student = h.require_student()
     body = h.read_body()
-    name = clean_text(body.get("name"), "Your name", 80, required=True)
-    contact = clean_text(body.get("contact"), "Contact", 120)
+    name, contact = student["name"] or student["email"], student["email"]
     note = clean_text(body.get("note"), "Note", 300)
     items = body.get("items")
     if not isinstance(items, list) or not items:
@@ -449,15 +540,20 @@ def create_order(h, q):
                 raise ApiError(409, msg)
             lines.append((p, qty))
             total += p["price_cents"] * qty
+        balance = DB.execute("SELECT balance_cents FROM students WHERE id=?", (student["id"],)).fetchone()["balance_cents"]
+        if balance < total:
+            raise ApiError(409, f"Not enough balance: this order is ${total / 100:.2f} and you have ${balance / 100:.2f}. "
+                                "Ask the Emporium staff to add money to your account.")
         code = new_code()
         while DB.execute("SELECT 1 FROM orders WHERE code=?", (code,)).fetchone():
             code = new_code()
         cur = DB.execute(
-            "INSERT INTO orders (code, customer_name, customer_contact, note, status, total_cents, created_at, updated_at)"
-            " VALUES (?,?,?,?, 'new', ?,?,?)",
-            (code, name, contact, note, total, now, now),
+            "INSERT INTO orders (code, customer_name, customer_contact, note, status, total_cents, created_at, updated_at, student_id)"
+            " VALUES (?,?,?,?, 'new', ?,?,?,?)",
+            (code, name, contact, note, total, now, now, student["id"]),
         )
         oid = cur.lastrowid
+        move_balance(student["id"], -total, "order", f"Order {code}", oid)
         for p, qty in lines:
             DB.execute(
                 "INSERT INTO order_items (order_id, product_id, name, price_cents, qty) VALUES (?,?,?,?,?)",
@@ -465,14 +561,78 @@ def create_order(h, q):
             )
             DB.execute("UPDATE products SET stock = stock - ? WHERE id=?", (qty, p["id"]))
         row = DB.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
-        h.send_json(201, {"order": order_dict(row)})
+        bal = DB.execute("SELECT balance_cents FROM students WHERE id=?", (student["id"],)).fetchone()["balance_cents"]
+        h.send_json(201, {"order": order_dict(row), "balance_cents": bal})
 
 
-def get_order(h, q, code):
-    row = DB.execute("SELECT * FROM orders WHERE code=?", (code.upper(),)).fetchone()
-    if not row:
-        raise ApiError(404, "We couldn't find that order code.")
-    h.send_json(200, {"order": order_dict(row)})
+def my_orders(h, q):
+    student = h.require_student()
+    rows = DB.execute("SELECT * FROM orders WHERE student_id=? ORDER BY created_at DESC LIMIT 50", (student["id"],)).fetchall()
+    h.send_json(200, {"orders": [order_dict(r) for r in rows]})
+
+
+# ---------- student sign-in ----------
+
+def google_client_id():
+    return os.environ.get("GOOGLE_CLIENT_ID") or get_setting("google_client_id") or ""
+
+
+def public_config(h, q):
+    h.send_json(200, {"google_client_id": google_client_id(), "student_domain": STUDENT_DOMAIN})
+
+
+def verify_google_credential(credential):
+    """Check a Sign in with Google ID token with Google, and that it's a verified school account."""
+    client_id = google_client_id()
+    if not client_id:
+        raise ApiError(503, "Student sign-in isn't set up yet. Staff: add the Google client ID in Settings.")
+    if not isinstance(credential, str) or not (20 < len(credential) < 5000):
+        raise ApiError(400, "Sign-in failed. Please try again.")
+    url = GOOGLE_TOKENINFO_URL + "?" + urllib.parse.urlencode({"id_token": credential})
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            claims = json.loads(resp.read())
+    except urllib.error.HTTPError:
+        raise ApiError(401, "Google couldn't confirm that sign-in. Please try again.")
+    except (urllib.error.URLError, OSError, ValueError):
+        raise ApiError(502, "Couldn't reach Google to check the sign-in. Try again in a moment.")
+    if claims.get("aud") != client_id or claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise ApiError(401, "That sign-in wasn't meant for this site.")
+    if int(claims.get("exp", 0)) < time.time():
+        raise ApiError(401, "That sign-in expired. Please try again.")
+    email = str(claims.get("email", "")).lower()
+    if str(claims.get("email_verified")).lower() != "true" or not email.endswith("@" + STUDENT_DOMAIN):
+        raise ApiError(403, f"Only @{STUDENT_DOMAIN} accounts can use the Emporium. Sign in with your school Google account.")
+    if claims.get("hd") and str(claims["hd"]).lower() != STUDENT_DOMAIN:
+        raise ApiError(403, f"Only @{STUDENT_DOMAIN} accounts can use the Emporium.")
+    return claims
+
+
+def auth_google(h, q):
+    claims = verify_google_credential(h.read_body().get("credential"))
+    now = time.time()
+    name = str(claims.get("name") or claims.get("given_name") or "")[:80]
+    picture = str(claims.get("picture") or "")
+    picture = picture if picture.startswith("https://") else ""
+    with db_lock, DB:
+        DB.execute(
+            "INSERT INTO students (google_sub, email, name, picture, created_at, last_login) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(google_sub) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture, last_login=excluded.last_login",
+            (str(claims["sub"]), str(claims["email"]).lower(), name, picture[:500], now, now),
+        )
+        st = DB.execute("SELECT * FROM students WHERE google_sub=?", (str(claims["sub"]),)).fetchone()
+    secure = "; Secure" if os.environ.get("SECURE_COOKIES") == "1" else ""
+    cookie = f"em_student={make_student_session(st['id'])}; Path=/; HttpOnly; SameSite=Lax; Max-Age={STUDENT_SESSION_DAYS * 86400}{secure}"
+    h.send_json(200, {"student": student_dict(st)}, {"Set-Cookie": cookie})
+
+
+def auth_logout(h, q):
+    h.send_json(200, {"ok": True}, {"Set-Cookie": "em_student=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+
+
+def me(h, q):
+    st = h.student()
+    h.send_json(200, {"student": student_dict(st) if st else None})
 
 
 def session_cookie():
@@ -628,6 +788,9 @@ def admin_get_settings(h, q):
         "ai_key_set": bool(key),
         "ai_key_hint": ("…" + key[-4:]) if key else "",
         "ai_key_from_env": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "google_client_id": google_client_id(),
+        "google_client_id_from_env": bool(os.environ.get("GOOGLE_CLIENT_ID")),
+        "student_domain": STUDENT_DOMAIN,
     })
 
 
@@ -644,6 +807,16 @@ def admin_save_settings(h, q):
                            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key,))
             else:
                 DB.execute("DELETE FROM settings WHERE key='anthropic_api_key'")
+    if "google_client_id" in body:
+        cid = str(body.get("google_client_id") or "").strip()
+        if cid and not re.fullmatch(r"[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com", cid):
+            raise ApiError(400, "That doesn't look like a Google client ID (it ends in .apps.googleusercontent.com).")
+        with db_lock, DB:
+            if cid:
+                DB.execute("INSERT INTO settings (key, value) VALUES ('google_client_id', ?) "
+                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (cid,))
+            else:
+                DB.execute("DELETE FROM settings WHERE key='google_client_id'")
     admin_get_settings(h, q)
 
 
@@ -741,11 +914,18 @@ def admin_update_order(h, q, oid):
         if not row:
             raise ApiError(404, "Order not found.")
         old = row["status"]
-        # Cancelling returns items to stock; un-cancelling takes them back out.
+        # Cancelling returns items to stock and refunds the student; reopening reverses both.
         if old != "cancelled" and status == "cancelled":
             for it in DB.execute("SELECT product_id, qty FROM order_items WHERE order_id=?", (oid,)):
                 DB.execute("UPDATE products SET stock = stock + ? WHERE id=?", (it["qty"], it["product_id"]))
+            if row["student_id"]:
+                move_balance(row["student_id"], row["total_cents"], "refund", f"Order {row['code']} cancelled", int(oid))
         elif old == "cancelled" and status != "cancelled":
+            if row["student_id"]:
+                try:
+                    move_balance(row["student_id"], -row["total_cents"], "order", f"Order {row['code']} reopened", int(oid))
+                except ApiError:
+                    raise ApiError(409, "The student doesn't have enough balance to reopen this order.")
             for it in DB.execute("SELECT product_id, qty FROM order_items WHERE order_id=?", (oid,)):
                 DB.execute("UPDATE products SET stock = MAX(stock - ?, 0) WHERE id=?", (it["qty"], it["product_id"]))
         DB.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?", (status, time.time(), oid))
@@ -753,10 +933,62 @@ def admin_update_order(h, q, oid):
     h.send_json(200, {"order": order_dict(row, include_contact=True)})
 
 
+def admin_students(h, q):
+    h.require_admin()
+    term = (q.get("q") or [""])[0].strip().lower()
+    if term:
+        like = f"%{term}%"
+        rows = DB.execute("SELECT * FROM students WHERE lower(email) LIKE ? OR lower(name) LIKE ? ORDER BY name LIMIT 200", (like, like)).fetchall()
+    else:
+        rows = DB.execute("SELECT * FROM students ORDER BY last_login DESC LIMIT 200").fetchall()
+    total = DB.execute("SELECT COUNT(*) c, COALESCE(SUM(balance_cents),0) b FROM students").fetchone()
+    h.send_json(200, {"students": [student_dict(r) for r in rows], "count": total["c"], "total_balance_cents": total["b"]})
+
+
+def admin_student(h, q, sid):
+    h.require_admin()
+    st = DB.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+    if not st:
+        raise ApiError(404, "Student not found.")
+    ledger = DB.execute("SELECT * FROM ledger WHERE student_id=? ORDER BY id DESC LIMIT 100", (sid,)).fetchall()
+    orders = DB.execute("SELECT * FROM orders WHERE student_id=? ORDER BY created_at DESC LIMIT 50", (sid,)).fetchall()
+    h.send_json(200, {"student": student_dict(st), "ledger": [dict(r) for r in ledger],
+                      "orders": [order_dict(r, include_contact=True) for r in orders]})
+
+
+def admin_student_balance(h, q, sid):
+    """Staff add money (e.g. cash handed over) or correct a mistake (negative amount)."""
+    h.require_admin()
+    body = h.read_body()
+    try:
+        cents = round(float(body.get("amount")) * 100)
+    except (TypeError, ValueError):
+        raise ApiError(400, "Amount must be a number, like 10 or 2.50.")
+    if cents == 0 or abs(cents) > MAX_BALANCE_CENTS:
+        raise ApiError(400, "Enter an amount between $0.01 and $1,000.")
+    note = clean_text(body.get("note"), "Note", 200)
+    with db_lock, DB:
+        try:
+            move_balance(int(sid), cents, "deposit" if cents > 0 else "adjust", note)
+        except ApiError as e:
+            if e.message == "Not enough balance.":
+                raise ApiError(409, "That would make the balance negative.")
+            raise
+        st = DB.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+    h.send_json(200, {"student": student_dict(st)})
+
+
 ROUTES = [
     (r"/api/products", "GET", get_products),
     (r"/api/orders", "POST", create_order),
-    (r"/api/orders/([A-Za-z0-9-]{3,20})", "GET", get_order),
+    (r"/api/me/orders", "GET", my_orders),
+    (r"/api/me", "GET", me),
+    (r"/api/config", "GET", public_config),
+    (r"/api/auth/google", "POST", auth_google),
+    (r"/api/auth/logout", "POST", auth_logout),
+    (r"/api/admin/students", "GET", admin_students),
+    (r"/api/admin/students/(\d+)", "GET", admin_student),
+    (r"/api/admin/students/(\d+)/balance", "POST", admin_student_balance),
     (r"/api/admin/login", "POST", admin_login),
     (r"/api/admin/logout", "POST", admin_logout),
     (r"/api/admin/me", "GET", admin_me),

@@ -129,6 +129,36 @@
         <button class="btn primary">Save key</button>
       </div>
     </form>
+    <form id="googleForm" style="border-top:1px solid var(--line);margin-top:16px;padding-top:4px">
+      <h3 style="font-size:16px;margin:12px 0 4px">Student sign-in (Google)</h3>
+      <p class="hint" style="margin:0 0 8px" id="googleStatus">Loading…</p>
+      <div class="field"><label for="cidInput">Google client ID</label>
+        <input id="cidInput" name="cid" autocomplete="off" spellcheck="false" placeholder="1234567890-abc123.apps.googleusercontent.com"></div>
+      <p class="hint">Create one at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">console.cloud.google.com → Credentials</a> → Create credentials → OAuth client ID → Web application. Under “Authorized JavaScript origins” add <code id="originHint"></code>. The README has step-by-step instructions.</p>
+      <p class="error" id="googleError"></p>
+      <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
+        <button class="btn primary">Save client ID</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="moneyDialog">
+    <form id="moneyForm">
+      <h2 style="margin-bottom:4px">Add money</h2>
+      <p class="hint" id="moneyWho" style="margin:0 0 12px"></p>
+      <input type="hidden" name="sid">
+      <div class="field"><label>Amount ($)</label><input name="amount" type="number" step="0.01" required placeholder="10.00"></div>
+      <p class="hint" style="margin-top:-6px">To fix a mistake, enter a negative amount (e.g. -5).</p>
+      <div class="field"><label>Note <span class="hint">(optional)</span></label><input name="note" maxlength="200" placeholder="e.g. Cash at the store"></div>
+      <p class="error" id="moneyError"></p>
+      <div class="toolbar" style="justify-content:flex-end;margin:12px 0 0">
+        <button type="button" class="btn" id="cancelMoney">Cancel</button>
+        <button class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="historyDialog">
+    <div class="toolbar" style="margin:0 0 8px"><h2 style="margin:0;flex:1" id="historyTitle">History</h2><button class="btn small" id="closeHistory">Close</button></div>
+    <div id="historyBody"></div>
   </dialog>
   <dialog id="pwDialog">
     <form id="pwForm">
@@ -203,11 +233,62 @@ function renderShell() {
   $("#app").innerHTML = `<nav class="tabs">
       <button class="chip ${tab === "orders" ? "on" : ""}" data-tab="orders">Orders</button>
       <button class="chip ${tab === "inventory" ? "on" : ""}" data-tab="inventory">Inventory</button>
+      <button class="chip ${tab === "students" ? "on" : ""}" data-tab="students">Students</button>
     </nav><div id="tabBody"></div>`;
   render();
 }
 
-function render() { tab === "orders" ? renderOrders() : renderInventory(); }
+function render() { tab === "orders" ? renderOrders() : tab === "students" ? renderStudents() : renderInventory(); }
+
+// ---- Students: balances ----
+let students = [], studentTotals = { count: 0, total_balance_cents: 0 }, studentQuery = "";
+async function loadStudents() {
+  try {
+    const r = await api("/api/admin/students" + (studentQuery ? "?q=" + encodeURIComponent(studentQuery) : ""));
+    students = r.students; studentTotals = { count: r.count, total_balance_cents: r.total_balance_cents };
+    if (tab === "students") renderStudents();
+  } catch {}
+}
+function renderStudents() {
+  const body = $("#tabBody"); if (!body) return;
+  body.innerHTML = `<section class="panel">
+    <div class="toolbar"><h2 style="margin:0;flex:1">Students · ${studentTotals.count}</h2>
+      <span class="photo-progress">Money on accounts: <b>${money(studentTotals.total_balance_cents)}</b></span></div>
+    <p class="hint" style="margin-top:0">Students appear here after they sign in to the store with their school Google account. When a student gives you cash, press <b>Add money</b>.</p>
+    <div class="toolbar"><input class="search" id="studentSearch" type="search" placeholder="Search by name or email…" value="${esc(studentQuery)}"></div>
+    ${students.length ? `<table class="inv"><thead><tr><th>Student</th><th>Balance</th><th></th></tr></thead><tbody>
+      ${students.map(st => `<tr>
+        <td><div class="item-cell">${st.picture ? `<img src="${esc(st.picture)}" alt="" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:50%">` : ""}
+          <div><b>${esc(st.name || st.email)}</b><div class="hint">${esc(st.email)}</div></div></div></td>
+        <td class="num"><b>${money(st.balance_cents)}</b></td>
+        <td class="num"><button class="btn small primary" data-money="${st.id}">Add money</button> <button class="btn small" data-history="${st.id}">History</button></td>
+      </tr>`).join("")}</tbody></table>`
+      : `<p class="empty">${studentQuery ? "No matches." : "No students yet. They'll show up after they sign in to the store."}</p>`}
+  </section>`;
+}
+function openMoney(id) {
+  const st = students.find(s => s.id == id); if (!st) return;
+  const f = $("#moneyForm"); f.reset(); f.sid.value = id; $("#moneyError").textContent = "";
+  $("#moneyWho").textContent = `${st.name || st.email} · balance ${money(st.balance_cents)}`;
+  $("#moneyDialog").showModal(); f.amount.focus();
+}
+const KIND = { deposit: "Money added", order: "Order", refund: "Refund", adjust: "Correction" };
+async function openHistory(id) {
+  $("#historyBody").innerHTML = `<p class="hint">Loading…</p>`; $("#historyDialog").showModal();
+  try {
+    const { student: st, ledger, orders } = await api("/api/admin/students/" + id);
+    $("#historyTitle").textContent = st.name || st.email;
+    $("#historyBody").innerHTML = `<p class="hint" style="margin-top:0">${esc(st.email)} · balance <b>${money(st.balance_cents)}</b></p>
+      <h3 style="font-size:15px;margin:12px 0 4px">Balance history</h3>
+      ${ledger.length ? `<table class="inv"><tbody>${ledger.map(l => `<tr>
+        <td>${KIND[l.kind] || esc(l.kind)}${l.note ? `<div class="hint">${esc(l.note)}</div>` : ""}</td>
+        <td class="num" style="color:${l.delta_cents < 0 ? "var(--danger)" : "var(--ok)"}">${l.delta_cents < 0 ? "−" : "+"}${money(Math.abs(l.delta_cents))}</td>
+        <td class="num hint">${money(l.balance_after)}</td>
+        <td class="num hint">${ago(l.created_at)}</td></tr>`).join("")}</tbody></table>` : `<p class="hint">Nothing yet.</p>`}
+      <h3 style="font-size:15px;margin:16px 0 4px">Orders</h3>
+      ${orders.length ? orders.map(o => `<div class="hint" style="padding:4px 0"><b style="color:var(--ink)">${esc(o.code)}</b> · ${LABEL[o.status]} · ${money(o.total_cents)} · ${o.items.map(i => `${i.qty}× ${esc(i.name)}`).join(", ")}</div>`).join("") : `<p class="hint">No orders yet.</p>`}`;
+  } catch (ex) { $("#historyBody").innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
+}
 
 async function loadOrders() {
   try { ({ orders, counts } = await api("/api/admin/orders?status=" + orderFilter)); if (tab === "orders") renderOrders(); } catch {}
@@ -228,12 +309,12 @@ function renderOrders() {
         <span class="spacer"></span>
         <b>${money(o.total_cents)}</b>
       </div>
-      <div class="meta"><b style="color:var(--ink)">${esc(o.customer_name)}</b>${o.customer_contact ? " · " + esc(o.customer_contact) : ""} · ${ago(o.created_at)}</div>
+      <div class="meta"><b style="color:var(--ink)">${esc(o.customer_name)}</b>${o.customer_contact ? " · " + esc(o.customer_contact) : ""} · ${ago(o.created_at)}${o.student_id ? " · paid from balance" : ""}</div>
       <div style="margin-top:6px">${o.items.map(i => `${i.qty}× ${esc(i.name)}`).join(" · ")}</div>
       ${o.note ? `<div class="note">${esc(o.note)}</div>` : ""}
       <div class="actions">
         ${o.status === "new" ? `<button class="btn small primary" data-status="ready" data-id="${o.id}">Mark ready</button>` : ""}
-        ${o.status === "new" || o.status === "ready" ? `<button class="btn small ${o.status === "ready" ? "primary" : ""}" data-status="picked_up" data-id="${o.id}">Picked up &amp; paid</button>` : ""}
+        ${o.status === "new" || o.status === "ready" ? `<button class="btn small ${o.status === "ready" ? "primary" : ""}" data-status="picked_up" data-id="${o.id}">Picked up</button>` : ""}
         ${o.status === "new" || o.status === "ready" ? `<button class="btn small danger" data-status="cancelled" data-id="${o.id}">Cancel</button>` : ""}
         ${o.status === "cancelled" || o.status === "picked_up" ? `<button class="btn small" data-status="new" data-id="${o.id}">Reopen</button>` : ""}
       </div>
@@ -386,7 +467,7 @@ function renderPhotoQueue() {
 
 // ---- Settings (AI key) ----
 async function openSettings() {
-  $("#settingsError").textContent = ""; $("#settingsForm").reset();
+  $("#settingsError").textContent = ""; $("#googleError").textContent = ""; $("#settingsForm").reset();
   $("#settingsDialog").showModal();
   try {
     const st = await api("/api/admin/settings");
@@ -394,6 +475,13 @@ async function openSettings() {
       ? `✓ AI key saved (${esc(st.ai_key_hint)})${st.ai_key_from_env ? " — set on the server" : ""}`
       : "No AI key yet — “Add by name” won't work until you add one.";
     $("#removeKey").hidden = !st.ai_key_set || st.ai_key_from_env;
+    const g = $("#googleStatus");
+    g.innerHTML = st.google_client_id
+      ? `✓ Student sign-in is on. Only <b>@${esc(st.student_domain)}</b> accounts can sign in.${st.google_client_id_from_env ? " (Set on the server.)" : ""}`
+      : `Not set up yet — students can't sign in until you add a Google client ID. Only <b>@${esc(st.student_domain)}</b> accounts will be allowed.`;
+    $("#cidInput").value = st.google_client_id || "";
+    $("#cidInput").disabled = st.google_client_id_from_env;
+    $("#originHint").textContent = location.origin;
   } catch {}
 }
 
@@ -570,10 +658,14 @@ drop.addEventListener("drop", e => {
 document.addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
   try {
-    if (b.dataset.tab) { tab = b.dataset.tab; renderShell(); tab === "orders" ? loadOrders() : loadProducts(); }
+    if (b.dataset.tab) { tab = b.dataset.tab; renderShell(); tab === "orders" ? loadOrders() : tab === "students" ? loadStudents() : loadProducts(); }
+    else if (b.dataset.money) openMoney(b.dataset.money);
+    else if (b.dataset.history) openHistory(b.dataset.history);
+    else if (b.id === "cancelMoney") $("#moneyDialog").close();
+    else if (b.id === "closeHistory") $("#historyDialog").close();
     else if (b.dataset.filter) { orderFilter = b.dataset.filter; renderOrders(); await loadOrders(); }
     else if (b.dataset.status) {
-      if (b.dataset.status === "cancelled" && !confirm("Cancel this order? Its items go back into stock.")) return;
+      if (b.dataset.status === "cancelled" && !confirm("Cancel this order? Its items go back into stock and the student gets their money back.")) return;
       b.disabled = true;
       await api("/api/admin/orders/" + b.dataset.id, { method: "PATCH", body: JSON.stringify({ status: b.dataset.status }) });
       toast(LABEL[b.dataset.status]); await Promise.all([loadOrders(), loadProducts()]);
@@ -626,6 +718,7 @@ document.addEventListener("input", e => {
   const k = e.target.dataset?.draft;
   if (k && auto.draft) { auto.draft[k] = e.target.value; return; }
   if (e.target.id === "autoQuery") { auto.query = e.target.value; return; }
+  if (e.target.id === "studentSearch") { studentQuery = e.target.value; clearTimeout(window.__sq); window.__sq = setTimeout(async () => { await loadStudents(); const s = $("#studentSearch"); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 250); return; }
   if (e.target.id === "invSearch") { invQuery = e.target.value; renderInventory(); const s = $("#invSearch"); s.focus(); s.setSelectionRange(s.value.length, s.value.length); }
 });
 
@@ -643,6 +736,23 @@ document.addEventListener("submit", async e => {
       await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: f.key.value.trim() }) });
       toast("AI key saved"); $("#settingsDialog").close(); refreshAiKey();
     } catch (ex) { $("#settingsError").textContent = ex.message; }
+    return;
+  } else if (fid === "googleForm") {
+    e.preventDefault();
+    try {
+      await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ google_client_id: f.cid.value.trim() }) });
+      toast(f.cid.value.trim() ? "Student sign-in is on" : "Student sign-in turned off"); openSettings();
+    } catch (ex) { $("#googleError").textContent = ex.message; }
+    return;
+  } else if (fid === "moneyForm") {
+    e.preventDefault();
+    try {
+      const { student } = await api(`/api/admin/students/${f.sid.value}/balance`, { method: "POST", body: JSON.stringify({ amount: f.amount.value, note: f.note.value }) });
+      $("#moneyDialog").close();
+      const amt = Number(f.amount.value);
+      toast(`${amt >= 0 ? "Added" : "Removed"} ${money(Math.abs(Math.round(amt * 100)))} — ${student.name || student.email} now has ${money(student.balance_cents)}`);
+      loadStudents();
+    } catch (ex) { $("#moneyError").textContent = ex.message; }
     return;
   } else if (fid === "setupForm") {
     e.preventDefault();

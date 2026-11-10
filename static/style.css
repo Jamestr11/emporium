@@ -221,3 +221,20 @@ footer.site { color: var(--muted); font-size: 13px; padding: 24px 0 40px; text-a
   .card h3 { font-size: 16px; }
   .card .row { flex-wrap: wrap; }
 }
+
+/* ---- student account ---- */
+.acct { gap: 6px; padding: 4px 10px 4px 4px; }
+.avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; display: inline-grid; place-items: center;
+  background: var(--brand); color: var(--brand-ink); font-weight: 700; font-size: 13px; }
+.bal { background: var(--surface-2); border-radius: 999px; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+.gsi { display: flex; justify-content: center; min-height: 44px; margin: 14px 0; }
+.sums { display: grid; gap: 6px; margin: 14px 0; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.sums div { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.sums .neg { color: var(--danger); }
+.acct-card { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; border-radius: 14px; background: var(--surface-2); }
+.acct-card small { display: block; color: var(--muted); font-size: 12px; }
+.bal-big { text-align: right; font: 700 26px var(--display); }
+.my-order { padding: 10px 0; border-bottom: 1px dashed var(--line); display: grid; gap: 3px; }
+.mo-head { display: flex; align-items: center; gap: 8px; }
+.mo-head b:first-child { font-family: ui-monospace, Menlo, monospace; }
+.mo-items { font-size: 13px; }

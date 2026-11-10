@@ -2,10 +2,38 @@
 
 Pickup-order website for the school store.
 
-- **Store** (`/`) — students browse items, add to a cart, and place a pickup order. They get a code (like `EM-4K7QZ`) to show at the store and pay at pickup. Sold-out items can't be ordered.
-- **Staff** (`/admin`) — password-protected. See incoming orders (New → Ready → Picked up & paid, or Cancel, which puts items back in stock), and manage inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
+- **Store** (`/`) — students sign in with their school Google account, browse items, and order. Orders are paid from their Emporium balance; they get a code (like `EM-4K7QZ`) to show at pickup. Sold-out items can't be ordered.
+- **Staff** (`/admin`) — password-protected. See incoming orders (New → Ready → Picked up, or Cancel, which restocks the items and refunds the student), manage student balances, and manage inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
 
 Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install -r requirements.txt`. Everything else works without it.
+
+## Student accounts and balances
+
+- Students tap **Sign in** on the store and use their school Google account. Only **@alpha.school** accounts are accepted (the server checks this, not just the page). The first sign-in creates their account.
+- Each student has an **Emporium balance**. Orders are paid from it; a student can't order more than they have. Cancelling an order refunds it automatically.
+- Staff → **Students** tab: search for a student, **Add money** when they hand over cash (a negative amount fixes a mistake), and **History** shows every deposit, order and refund.
+- Students see their balance and their orders (New → Ready → Picked up) under their name on the store.
+
+### Turning on Sign in with Google (one time, ~10 minutes)
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a project called **Emporium**.
+2. **Google Auth Platform → Branding**: app name *The Emporium*, your email as support email. Under **Audience**, pick **Internal** if you're signed in with your school Google account (then only school accounts can ever use it); otherwise pick External and publish the app.
+3. **Clients → Create client → Web application**. Under **Authorized JavaScript origins** add:
+   - `http://localhost:8765` (your Mac)
+   - `https://<you>.pythonanywhere.com` (the live site)
+
+   No redirect URIs are needed. Press **Create** and copy the **Client ID** (ends in `.apps.googleusercontent.com`). The client ID isn't secret.
+4. Staff page → **Settings** → **Student sign-in (Google)** → paste the client ID → **Save client ID**.
+
+To allow a different email domain, set `STUDENT_EMAIL_DOMAIN` on the server.
+
+## Tests
+
+```bash
+python3 tests/test_accounts.py
+```
+
+Runs the real server against a stand-in for Google and checks sign-in rules, balances, refunds, and that two simultaneous orders can't overspend.
 
 ## Adding items
 
@@ -69,5 +97,7 @@ Anything that runs Python and keeps a disk works (Railway, Render, Fly.io, a sch
 | `UPLOAD_DIR` | `uploads/` next to the database | Where uploaded photos are stored |
 | `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
 | `PORT` | `8000` | Port to listen on (`server.py` only) |
+| `GOOGLE_CLIENT_ID` | unset | Optional: the Google client ID for student sign-in, instead of saving it in Settings |
+| `STUDENT_EMAIL_DOMAIN` | `alpha.school` | Only Google accounts with this email domain can sign in |
 | `ADMIN_PASSWORD` | unset | Optional: fix the staff password from the server instead of creating it on the staff page |
 | `SECRET_KEY` | generated and stored in the database | Optional: signs staff sign-in sessions |
