@@ -84,7 +84,7 @@ The live site runs on [PythonAnywhere](https://www.pythonanywhere.com) through `
 
 **Updating after a code change:** push to GitHub, then in a PythonAnywhere Bash console run `cd ~/emporium && git pull` and press **Reload** on the Web tab.
 
-**Keep it alive:** free sites pause after 3 months unless you log in and press *Run until 3 months from today* on the Web tab. PythonAnywhere emails a reminder.
+**Keep it alive:** free sites pause after a month unless you log in and press *Run until 1 month from today* on the Web tab (once a month). PythonAnywhere emails a reminder.
 
 **Backups:** download `~/emporium-data/emporium.db` (and the `uploads` folder beside it) from the **Files** tab now and then.
 

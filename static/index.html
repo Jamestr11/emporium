@@ -199,6 +199,8 @@ async function renderGoogleButton() {
   if (!config.google_client_id) { box.innerHTML = `<p class="hint">Student sign-in isn't set up yet — ask the Emporium staff.</p>`; return; }
   try {
     await loadGoogle();
+    if (!box.isConnected) return;
+    box.replaceChildren();
     google.accounts.id.renderButton(box, { theme: "outline", size: "large", text: "signin_with", shape: "pill", width: 280 });
   } catch (ex) { box.innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
 }
