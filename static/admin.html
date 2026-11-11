@@ -69,7 +69,7 @@
     <div class="wrap">
       <a class="logo" href="/admin"><b>The Emporium</b><span>Staff</span></a>
       <div class="spacer"></div>
-      <a class="btn small hide-sm" href="/" target="_blank">View store</a>
+      <a class="btn small hide-sm" href="/">View store</a>
       <button class="btn small" id="settingsBtn" hidden>Settings</button>
       <button class="btn small" id="pwBtn" hidden>Password</button>
       <button class="btn small" id="logout" hidden>Sign out</button>
@@ -219,7 +219,7 @@ function showLogin() {
     <button class="btn primary block">Sign in</button>`;
   $("#app").innerHTML = `<form class="panel login" id="loginForm">
     <h2>Staff sign in</h2>
-    ${adminInfo.google_admins ? `<p class="hint" style="margin-top:4px">Staff can sign in with their school Google account.</p>` : ""}
+    ${adminInfo.google_admins ? `<p class="hint" style="margin-top:4px">Sign in with the same school Google account you use on the store. Admins are recognized automatically.</p>` : ""}
     ${googleBlock()}${pwForm}
   </form>`;
   renderStaffGoogle();
@@ -249,8 +249,7 @@ async function onStaffGoogle(resp) {
     await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
     const info = await api("/api/admin/me");
     if (!info.signed_in) {
-      await fetch("/api/auth/logout", { method: "POST" });
-      $("#googleError").textContent = "That Google account isn't on the staff list.";
+      $("#googleError").innerHTML = `That account is a student account, not staff. <a href="/">Go to the store</a>`;
       return;
     }
     boot();
@@ -343,9 +342,10 @@ function renderStudents() {
     ${students.length ? `<table class="inv"><thead><tr><th>Student</th><th>Balance</th><th></th></tr></thead><tbody>
       ${students.map(st => `<tr>
         <td><div class="item-cell">${st.picture ? `<img src="${esc(st.picture)}" alt="" referrerpolicy="no-referrer" style="width:34px;height:34px;border-radius:50%">` : ""}
-          <div><b>${esc(st.name || st.email)}</b><div class="hint">${esc(st.email)}</div></div></div></td>
+          <div><b>${esc(st.name || st.email)}</b>${st.is_admin ? ` <span class="status-pill s-ready">Admin</span>` : ""}<div class="hint">${esc(st.email)}</div></div></div></td>
         <td class="num"><b>${money(st.balance_cents)}</b></td>
-        <td class="num"><button class="btn small primary" data-money="${st.id}">Add money</button> <button class="btn small" data-history="${st.id}">History</button></td>
+        <td class="num"><button class="btn small primary" data-money="${st.id}">Add money</button> <button class="btn small" data-history="${st.id}">History</button>
+          ${st.admin_locked ? "" : st.is_admin ? `<button class="btn small" data-role="0" data-sid="${st.id}">Remove admin</button>` : `<button class="btn small" data-role="1" data-sid="${st.id}">Make admin</button>`}</td>
       </tr>`).join("")}</tbody></table>`
       : `<p class="empty">${studentQuery ? "No matches." : "No students yet. They'll show up after they sign in to the store."}</p>`}
   </section>`;
@@ -767,6 +767,12 @@ document.addEventListener("click", async e => {
       tab = "inventory"; renderShell(); await loadProducts();
       $("#autoQuery")?.focus();
       toast("Press Find it to look it up");
+    }
+    else if (b.dataset.role) {
+      const st = students.find(x => x.id == b.dataset.sid), make = b.dataset.role === "1";
+      if (!confirm(make ? `Make ${st.name || st.email} an admin? They'll be able to add money, change items and see all orders.` : `Remove admin from ${st.name || st.email}?`)) return;
+      await api(`/api/admin/students/${b.dataset.sid}/role`, { method: "POST", body: JSON.stringify({ admin: make }) });
+      toast(make ? `${st.name || st.email} is now an admin` : "Admin removed"); await loadStudents();
     }
     else if (b.dataset.money) openMoney(b.dataset.money);
     else if (b.dataset.history) openHistory(b.dataset.history);

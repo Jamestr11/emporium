@@ -199,7 +199,7 @@ function renderAccount() {
   } else {
     const first = (me.name || me.email).split(" ")[0];
     const avatar = me.picture ? `<img class="avatar" src="${esc(me.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar">${esc(first[0] || "?")}</span>`;
-    el.innerHTML = `<button class="btn small acct" id="accountBtn" aria-label="Your account">${avatar}<span class="hide-sm">${esc(first)}</span><span class="bal">${money(me.balance_cents)}</span></button>`;
+    el.innerHTML = (me.is_admin ? `<a class="btn small staff-link" href="/admin">⚙︎ Staff</a>` : "") + `<button class="btn small acct" id="accountBtn" aria-label="Your account">${avatar}<span class="hide-sm">${esc(first)}</span><span class="bal">${money(me.balance_cents)}</span></button>`;
     if (weekly && weekly.remaining !== null) el.innerHTML += `<span class="weekly hide-sm" title="Resets Monday">${weekly.remaining} ${weekly.remaining === 1 ? "item" : "items"} left this week</span>`;
   }
   if ($("#drawer").classList.contains("open") && ["checkout", "account", "signin"].includes(view)) renderDrawer();

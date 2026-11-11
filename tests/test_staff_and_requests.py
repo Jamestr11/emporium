@@ -101,6 +101,18 @@ def main():
         check("staff sign out also ends Google session", not call(bob, "/api/admin/me")[1]["signed_in"])
         call(bob, "/api/auth/google", {"credential": "tok-bob" + PAD})
 
+        # ---- admins recognized by account ----
+        r = call(alice, "/api/me")[1]["student"]; check("kid account is not admin", r["is_admin"] is False, r)
+        r = call(bob, "/api/me")[1]["student"]; check("admin account recognized on the store", r["is_admin"] and r["admin_locked"], r)
+        r = call(alice, f"/api/admin/students/{aid}/role", {"admin": True}); check("kid can't make themself admin", r[0] == 401, r)
+        r = call(bob, f"/api/admin/students/{aid}/role", {"admin": True}); check("admin makes Alice an admin", r[1]["student"]["is_admin"], r)
+        check("Alice now gets the staff page", call(alice, "/api/admin/me")[1]["signed_in"] and call(alice, "/api/admin/students")[0] == 200)
+        bid = next(s["id"] for s in call(bob, "/api/admin/students")[1]["students"] if s["email"] == "bob.lee@alpha.school")
+        r = call(alice, f"/api/admin/students/{bid}/role", {"admin": False}); check("server-set admin can't be removed", r[0] == 409, r)
+        r = call(alice, f"/api/admin/students/{aid}/role", {"admin": False}); check("can't remove your own admin", r[0] == 409, r)
+        r = call(bob, f"/api/admin/students/{aid}/role", {"admin": False}); check("admin removes Alice", not r[1]["student"]["is_admin"], r)
+        check("Alice is a kid again", not call(alice, "/api/admin/me")[1]["signed_in"] and call(alice, "/api/admin/students")[0] == 401)
+
         # ---- requests ----
         r = call(anon, "/api/requests", {"name": "Sour Patch Kids"}); check("must sign in to request", r[0] == 401, r)
         r = call(alice, "/api/requests", {"name": "  Sour   Patch Kids ", "note": "watermelon"}); check("student requests", r[0] == 200 and r[1]["request"]["votes"] == 1 and r[1]["request"]["name"] == "Sour Patch Kids", r)

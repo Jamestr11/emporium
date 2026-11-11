@@ -164,6 +164,8 @@ def init_db():
             );
             """
         )
+        if "is_admin" not in {r["name"] for r in DB.execute("PRAGMA table_info(students)")}:
+            DB.execute("ALTER TABLE students ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         if "student_id" not in {r["name"] for r in DB.execute("PRAGMA table_info(orders)")}:
             DB.execute("ALTER TABLE orders ADD COLUMN student_id INTEGER REFERENCES students(id)")
         count = DB.execute("SELECT COUNT(*) FROM products").fetchone()[0]
@@ -257,10 +259,17 @@ def weekly_status(student_id):
     return {"limit": limit, "used": used, "remaining": None if limit == 0 else max(0, limit - used), "resets_at": resets}
 
 
+def account_is_admin(row):
+    """Staff are recognized by their Google account: listed in ADMIN_EMAILS on the server,
+    or made admin by another admin on the Students tab."""
+    return bool(row) and (row["email"].lower() in ADMIN_EMAILS or bool(row["is_admin"]))
+
+
 def student_dict(row):
     return {
         "id": row["id"], "email": row["email"], "name": row["name"], "picture": row["picture"],
         "balance_cents": row["balance_cents"], "created_at": row["created_at"], "last_login": row["last_login"],
+        "is_admin": account_is_admin(row), "admin_locked": row["email"].lower() in ADMIN_EMAILS,
     }
 
 
@@ -475,11 +484,9 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def google_admin(self):
-        """The signed-in Google account, if it's on the ADMIN_EMAILS list."""
-        if not ADMIN_EMAILS:
-            return None
+        """The signed-in Google account, if it's an admin."""
         st = self.student()
-        return st if st and st["email"].lower() in ADMIN_EMAILS else None
+        return st if account_is_admin(st) else None
 
     def is_admin(self):
         return valid_session(self.cookie("em_session")) or bool(self.google_admin())
@@ -745,7 +752,7 @@ def admin_login(h, q):
 def admin_setup(h, q):
     """First run only: whoever opens /admin first chooses the staff password. When admin Google
     accounts are configured, only they can create it, so nobody else can claim the staff page."""
-    if ADMIN_EMAILS and not h.google_admin():
+    if (ADMIN_EMAILS or DB.execute("SELECT 1 FROM students WHERE is_admin=1").fetchone()) and not h.google_admin():
         raise ApiError(403, "Sign in with an admin Google account first.")
     pw = valid_new_password(h.read_body().get("password"))
     with db_lock, DB:
@@ -781,7 +788,7 @@ def admin_me(h, q):
     h.send_json(200, {
         "signed_in": h.is_admin(),
         "needs_setup": needs_setup(),
-        "google_admins": bool(ADMIN_EMAILS),
+        "google_admins": bool(ADMIN_EMAILS) or bool(DB.execute("SELECT 1 FROM students WHERE is_admin=1").fetchone()),
         "google_admin": ga["email"] if ga else None,
     })
 
@@ -1184,6 +1191,24 @@ def admin_student_balance(h, q, sid):
     h.send_json(200, {"student": student_dict(st)})
 
 
+def admin_student_role(h, q, sid):
+    """An admin makes another account an admin, or takes it away."""
+    h.require_admin()
+    make = bool(h.read_body().get("admin"))
+    with db_lock, DB:
+        st = DB.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+        if not st:
+            raise ApiError(404, "Student not found.")
+        if not make and st["email"].lower() in ADMIN_EMAILS:
+            raise ApiError(409, "This admin is set on the server and can't be removed here.")
+        me = h.google_admin()
+        if not make and me and me["id"] == st["id"]:
+            raise ApiError(409, "You can't remove your own admin access.")
+        DB.execute("UPDATE students SET is_admin=? WHERE id=?", (1 if make else 0, sid))
+        st = DB.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+    h.send_json(200, {"student": student_dict(st)})
+
+
 ROUTES = [
     (r"/api/products", "GET", get_products),
     (r"/api/orders", "POST", create_order),
@@ -1200,6 +1225,7 @@ ROUTES = [
     (r"/api/admin/students", "GET", admin_students),
     (r"/api/admin/students/(\d+)", "GET", admin_student),
     (r"/api/admin/students/(\d+)/balance", "POST", admin_student_balance),
+    (r"/api/admin/students/(\d+)/role", "POST", admin_student_role),
     (r"/api/admin/login", "POST", admin_login),
     (r"/api/admin/logout", "POST", admin_logout),
     (r"/api/admin/me", "GET", admin_me),

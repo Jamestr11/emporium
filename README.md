@@ -15,9 +15,13 @@ Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install 
 - Staff → **Students** tab: search for a student, **Add money** when they hand over cash (a negative amount fixes a mistake), and **History** shows every deposit, order and refund.
 - Students see their balance and their orders (New → Ready → Picked up) under their name on the store.
 
-### Staff sign-in with Google
+### Admins (staff) — recognized by Google account
 
-Set `ADMIN_EMAILS` on the server (comma-separated school emails). Those people open `/admin`, press **Sign in with Google**, and get the full staff page — no password needed. While `ADMIN_EMAILS` is set, only they can create the shared staff password (Password button), so nobody else can claim the staff page.
+Everyone signs in the same way, with their school Google account. Admin accounts are recognized automatically: they get a **⚙︎ Staff** button on the store, and `/admin` opens straight into the staff page. Everyone else is a student.
+
+- Set the first admin(s) with `ADMIN_EMAILS` on the server (comma-separated). Those can't be removed from the site.
+- Any admin can make other people admins (or remove them) on the **Students** tab → **Make admin**. They need to sign in to the store once first.
+- While any admin exists, only an admin can create the optional shared staff password (Password button), so nobody else can claim the staff page.
 
 ### Requests
 
@@ -108,7 +112,7 @@ Anything that runs Python and keeps a disk works (Railway, Render, Fly.io, a sch
 | `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
 | `PORT` | `8000` | Port to listen on (`server.py` only) |
 | `GOOGLE_CLIENT_ID` | unset | Optional: the Google client ID for student sign-in, instead of saving it in Settings |
-| `ADMIN_EMAILS` | unset | School emails that can open the staff page by signing in with Google |
+| `ADMIN_EMAILS` | unset | School emails that are always admins (more can be added on the Students tab) |
 | `STUDENT_EMAIL_DOMAIN` | `alpha.school` | Only Google accounts with this email domain can sign in |
 | `ADMIN_PASSWORD` | unset | Optional: fix the staff password from the server instead of creating it on the staff page |
 | `SECRET_KEY` | generated and stored in the database | Optional: signs staff sign-in sessions |
