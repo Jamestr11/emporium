@@ -205,15 +205,56 @@ async function api(path, opts = {}) {
   return data;
 }
 
+let adminInfo = {};
+const googleBlock = () => adminInfo.google_admins ? `
+    <div id="gsiStaff" class="gsi"></div>
+    <p class="error" id="googleError"></p>` : "";
+
 function showLogin() {
   $("#logout").hidden = true; $("#pwBtn").hidden = true; $("#settingsBtn").hidden = true;
-  $("#app").innerHTML = `<form class="panel login" id="loginForm">
-    <h2>Staff sign in</h2>
+  const pwForm = adminInfo.needs_setup ? "" : `
+    ${adminInfo.google_admins ? `<p class="hint or">or use the staff password</p>` : ""}
     <div class="field"><label for="pw">Password</label><input id="pw" type="password" required autocomplete="current-password"></div>
     <p class="error" id="loginError"></p>
-    <button class="btn primary block">Sign in</button>
+    <button class="btn primary block">Sign in</button>`;
+  $("#app").innerHTML = `<form class="panel login" id="loginForm">
+    <h2>Staff sign in</h2>
+    ${adminInfo.google_admins ? `<p class="hint" style="margin-top:4px">Staff can sign in with their school Google account.</p>` : ""}
+    ${googleBlock()}${pwForm}
   </form>`;
-  $("#pw").focus();
+  renderStaffGoogle();
+  if (!adminInfo.google_admins) $("#pw")?.focus();
+}
+
+let gsiStaff = null;
+async function renderStaffGoogle() {
+  const box = $("#gsiStaff"); if (!box) return;
+  try {
+    const cfg = await fetch("/api/config").then(r => r.json());
+    if (!cfg.google_client_id) { box.innerHTML = `<p class="hint">Google sign-in isn't set up yet.</p>`; return; }
+    gsiStaff ??= new Promise((ok, fail) => {
+      const sc = Object.assign(document.createElement("script"), { src: "https://accounts.google.com/gsi/client", async: true });
+      sc.onload = () => { google.accounts.id.initialize({ client_id: cfg.google_client_id, callback: onStaffGoogle, hd: cfg.student_domain, ux_mode: "popup" }); ok(); };
+      sc.onerror = () => { gsiStaff = null; fail(new Error("Couldn't load Google sign-in.")); };
+      document.head.append(sc);
+    });
+    await gsiStaff;
+    if (!box.isConnected) return;
+    box.replaceChildren();
+    google.accounts.id.renderButton(box, { theme: "outline", size: "large", text: "signin_with", shape: "pill", width: 280 });
+  } catch (ex) { box.innerHTML = `<p class="error">${esc(ex.message)}</p>`; }
+}
+async function onStaffGoogle(resp) {
+  try {
+    await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) });
+    const info = await api("/api/admin/me");
+    if (!info.signed_in) {
+      await fetch("/api/auth/logout", { method: "POST" });
+      $("#googleError").textContent = "That Google account isn't on the staff list.";
+      return;
+    }
+    boot();
+  } catch (ex) { const el = $("#googleError"); if (el) el.textContent = ex.message; }
 }
 
 function showSetup() {
@@ -230,12 +271,12 @@ function showSetup() {
 }
 
 async function boot() {
-  const { signed_in, needs_setup } = await api("/api/admin/me");
-  if (needs_setup) return showSetup();
-  if (!signed_in) return showLogin();
+  adminInfo = await api("/api/admin/me");
+  const { signed_in, needs_setup, google_admins } = adminInfo;
+  if (!signed_in) return needs_setup && !google_admins ? showSetup() : showLogin();
   $("#logout").hidden = false; $("#pwBtn").hidden = false; $("#settingsBtn").hidden = false;
   renderShell();
-  await Promise.all([loadOrders(), loadProducts(), refreshAiKey()]);
+  await Promise.all([loadOrders(), loadProducts(), refreshAiKey(), loadRequests()]);
 }
 
 function renderShell() {
@@ -243,11 +284,45 @@ function renderShell() {
       <button class="chip ${tab === "orders" ? "on" : ""}" data-tab="orders">Orders</button>
       <button class="chip ${tab === "inventory" ? "on" : ""}" data-tab="inventory">Inventory</button>
       <button class="chip ${tab === "students" ? "on" : ""}" data-tab="students">Students</button>
+      <button class="chip ${tab === "requests" ? "on" : ""}" data-tab="requests">Requests${openRequests ? ` · ${openRequests}` : ""}</button>
     </nav><div id="tabBody"></div>`;
   render();
 }
 
-function render() { tab === "orders" ? renderOrders() : tab === "students" ? renderStudents() : renderInventory(); }
+function render() { ({ orders: renderOrders, students: renderStudents, requests: renderRequests })[tab]?.() ?? renderInventory(); }
+
+// ---- Requests: what students want the store to carry ----
+let requests = [], openRequests = 0, requestFilter = "open";
+const REQ = { open: "Open", added: "Added", declined: "Declined" };
+async function loadRequests() {
+  try {
+    ({ requests, open: openRequests } = await api("/api/admin/requests"));
+    const chip = document.querySelector('[data-tab="requests"]'); if (chip) chip.textContent = "Requests" + (openRequests ? ` · ${openRequests}` : "");
+    if (tab === "requests") renderRequests();
+  } catch {}
+}
+function renderRequests() {
+  const body = $("#tabBody"); if (!body) return;
+  const list = requests.filter(r => r.status === requestFilter);
+  const filters = Object.keys(REQ).map(s => `<button class="chip ${s === requestFilter ? "on" : ""}" data-rfilter="${s}">${REQ[s]} · ${requests.filter(r => r.status === s).length}</button>`).join("");
+  body.innerHTML = `<section class="panel">
+    <h2 style="margin:0 0 4px">Requests</h2>
+    <p class="hint" style="margin-top:0">Things students asked the Emporium to get. ▲ is how many students want it. Most wanted first.</p>
+    <div class="chips" style="padding-top:4px">${filters}</div>
+    ${list.length ? `<table class="inv"><tbody>${list.map(r => `<tr>
+      <td class="num" style="width:56px"><b style="font-size:18px">▲ ${r.votes}</b></td>
+      <td><b>${esc(r.name)}</b>${r.note ? `<div class="note">${esc(r.note)}</div>` : ""}
+        <div class="hint">Asked by ${esc(r.student_name || r.student_email)} · ${ago(r.created_at)}</div></td>
+      <td class="num" style="white-space:nowrap">
+        ${r.status === "open" ? `<button class="btn small primary" data-findreq="${r.id}" title="Look it up with Add by name">✨ Find &amp; add</button>
+          <button class="btn small" data-reqstatus="added" data-id="${r.id}">Mark added</button>
+          <button class="btn small" data-reqstatus="declined" data-id="${r.id}">Decline</button>`
+        : `<button class="btn small" data-reqstatus="open" data-id="${r.id}">Reopen</button>`}
+        <button class="btn small danger" data-reqdelete="${r.id}" title="Delete">✕</button>
+      </td></tr>`).join("")}</tbody></table>`
+      : `<p class="empty">${requestFilter === "open" ? "No open requests. Students can ask for things from the store page." : "Nothing here."}</p>`}
+  </section>`;
+}
 
 // ---- Students: balances ----
 let students = [], studentTotals = { count: 0, total_balance_cents: 0 }, studentQuery = "";
@@ -427,6 +502,10 @@ async function saveDraft() {
       name: d.name, price: d.price, stock: d.stock, category: d.category, description: d.description }) });
     products.push(product);
     auto.draft = null; auto.query = ""; auto.saving = false;
+    if (auto.fromRequest) {
+      api("/api/admin/requests/" + auto.fromRequest, { method: "PATCH", body: JSON.stringify({ status: "added" }) }).then(loadRequests).catch(() => {});
+      auto.fromRequest = null;
+    }
     renderInventory();
     toast(`Added ${product.name}`);
     if (pick !== undefined) await usePhotoFromWeb(product.id, d.image_urls[pick]);
@@ -668,7 +747,27 @@ drop.addEventListener("drop", e => {
 document.addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
   try {
-    if (b.dataset.tab) { tab = b.dataset.tab; renderShell(); tab === "orders" ? loadOrders() : tab === "students" ? loadStudents() : loadProducts(); }
+    if (b.dataset.tab) { tab = b.dataset.tab; renderShell(); ({ orders: loadOrders, students: loadStudents, requests: loadRequests })[tab]?.() ?? loadProducts(); }
+    else if (b.dataset.rfilter) { requestFilter = b.dataset.rfilter; renderRequests(); }
+    else if (b.dataset.reqstatus) {
+      b.disabled = true;
+      await api("/api/admin/requests/" + b.dataset.id, { method: "PATCH", body: JSON.stringify({ status: b.dataset.reqstatus }) });
+      toast(b.dataset.reqstatus === "added" ? "Marked as added — students will see it's in the store" : b.dataset.reqstatus === "declined" ? "Declined" : "Reopened");
+      await loadRequests();
+    }
+    else if (b.dataset.reqdelete) {
+      if (!confirm("Delete this request?")) return;
+      await api("/api/admin/requests/" + b.dataset.reqdelete, { method: "PATCH", body: JSON.stringify({ delete: true }) });
+      await loadRequests();
+    }
+    else if (b.dataset.findreq) {
+      const r = requests.find(x => x.id == b.dataset.findreq); if (!r) return;
+      // Hand it to Add by name, and mark the request added once it's in the store.
+      auto.query = r.name + (r.note ? " — " + r.note : ""); auto.fromRequest = r.id;
+      tab = "inventory"; renderShell(); await loadProducts();
+      $("#autoQuery")?.focus();
+      toast("Press Find it to look it up");
+    }
     else if (b.dataset.money) openMoney(b.dataset.money);
     else if (b.dataset.history) openHistory(b.dataset.history);
     else if (b.id === "cancelMoney") $("#moneyDialog").close();

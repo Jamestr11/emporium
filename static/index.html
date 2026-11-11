@@ -25,14 +25,24 @@
     <section class="hero">
       <h1>Order ahead.<br>Grab it at the Emporium.</h1>
       <p>Sign in with your school Google account, pick what you want, and pay with your Emporium balance. We'll have it ready at the store.</p>
+      <button class="btn request-cta" id="requestsBtn">💡 Want something we don't have? <b>Request it</b></button>
     </section>
 
+    <section class="panel gate" id="gate" hidden>
+      <h2>Sign in to see the store</h2>
+      <p>The Emporium is for Alpha students. Sign in with your <b>@alpha.school</b> Google account to browse, order and request items.</p>
+      <div id="gsiGate" class="gsi"></div>
+      <p class="error" id="gateError" role="alert"></p>
+    </section>
+
+    <div id="storeBody">
     <input class="search" id="search" type="search" placeholder="Search candy, tech, books, plushies…" aria-label="Search products">
     <nav class="chips" id="chips" aria-label="Categories"></nav>
     <section class="grid" id="grid" aria-live="polite"></section>
+    </div>
   </main>
 
-  <footer class="site">The Emporium · Pay with your Emporium balance · <a href="/admin">Staff</a></footer>
+  <footer class="site">The Emporium · Pay with your Emporium balance · <button class="linkish" id="requestsBtn2">Request an item</button> · <a href="/admin">Staff</a></footer>
 
   <button class="btn primary mobile-cart" id="mobileCart"><span>View cart · <b id="mobileCount">0</b></span><b id="mobileTotal">$0.00</b></button>
 
@@ -55,7 +65,9 @@ let products = [];
 let category = "All";
 let query = "";
 let cart = load("em_cart", {});          // { productId: qty }
-let view = "cart";                         // cart | checkout | done | account | signin
+let view = "cart";                         // cart | checkout | done | account | signin | requests
+let requests = [];                         // open/added product requests
+let requestDraft = "";                     // prefilled from a search with no matches
 let me = null;                             // signed-in student, or null
 let weekly = null;                         // { limit, used, remaining, resets_at } for the signed-in student
 let config = { google_client_id: "", student_domain: "alpha.school" };
@@ -77,8 +89,20 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// ---------- sign-in gate: only signed-in students see the store ----------
+function showGate() {
+  $("#gate").hidden = false; $("#storeBody").hidden = true;
+  for (const id of ["#requestsBtn", "#requestsBtn2", "#mobileCart", "#cartBtn"]) $(id).hidden = true;
+  products = []; renderGoogleButton("#gsiGate");
+}
+function showStore() {
+  $("#gate").hidden = true; $("#storeBody").hidden = false;
+  for (const id of ["#requestsBtn", "#requestsBtn2", "#mobileCart", "#cartBtn"]) $(id).hidden = false;
+}
+
 // ---------- products ----------
 async function loadProducts() {
+  if (!me) return;
   try {
     products = (await api("/api/products")).products;
   } catch (e) {
@@ -106,7 +130,7 @@ function renderGrid() {
     (category === "All" || p.category === category) &&
     (!q || (p.name + " " + p.description + " " + p.category).toLowerCase().includes(q)));
   if (!products.length) { $("#grid").innerHTML = `<p class="empty">Nothing on the shelves yet — check back soon.</p>`; return; }
-  if (!list.length) { $("#grid").innerHTML = `<p class="empty">No matches.</p>`; return; }
+  if (!list.length) { $("#grid").innerHTML = `<div class="empty">No matches.<br><button class="btn" id="requestFromSearch" style="margin-top:12px">Ask the store to get “${esc(query.trim() || "it")}”</button></div>`; return; }
   $("#grid").innerHTML = list.map(p => {
     const qty = cart[p.id] || 0, out = p.stock <= 0;
     // Every product sits on a white tile that floats and tilts; no photo → a lettered tile.
@@ -194,8 +218,8 @@ function loadGoogle() {
   });
 }
 
-async function renderGoogleButton() {
-  const box = $("#gsiButton"); if (!box) return;
+async function renderGoogleButton(sel = "#gsiButton") {
+  const box = $(sel); if (!box) return;
   if (!config.google_client_id) { box.innerHTML = `<p class="hint">Student sign-in isn't set up yet — ask the Emporium staff.</p>`; return; }
   try {
     await loadGoogle();
@@ -211,22 +235,35 @@ async function onGoogleCredential(resp) {
     await loadMe();
     toast(`Signed in as ${me.email}`);
     renderAccount();
-    if (view === "signin") { view = cartCount() ? "checkout" : "account"; if (view === "account") await loadMyOrders(); renderDrawer(); }
+    if (!$("#gate").hidden) { showStore(); loadProducts(); }
+    if (view === "signin" && afterSignin === "requests") { afterSignin = null; await openRequests(); }
+    else if (view === "signin") { view = cartCount() ? "checkout" : "account"; if (view === "account") await loadMyOrders(); renderDrawer(); }
   } catch (ex) {
     toast(ex.message);
-    const err = $("#signinError"); if (err) err.textContent = ex.message;
+    for (const id of ["#signinError", "#gateError"]) { const err = $(id); if (err) err.textContent = ex.message; }
   }
 }
 
 async function signOut() {
   await api("/api/auth/logout", { method: "POST" }).catch(() => {});
   try { google.accounts.id.disableAutoSelect(); } catch {}
-  me = null; myOrders = []; renderAccount(); closeDrawer(); toast("Signed out");
+  me = null; myOrders = []; renderAccount(); closeDrawer(); showGate(); toast("Signed out");
 }
 
 async function loadMyOrders() {
   try { myOrders = (await api("/api/me/orders")).orders; } catch { myOrders = []; }
 }
+
+let afterSignin = null;
+
+async function openRequests(draft) {
+  if (draft !== undefined) requestDraft = draft;
+  openDrawer("requests");
+  try { requests = (await api("/api/requests")).requests; } catch { requests = []; }
+  if (view === "requests") renderDrawer();
+}
+
+const REQ_LABEL = { open: "Requested", added: "In the store now", declined: "Not this time" };
 
 // ---------- drawer ----------
 function openDrawer(v = "cart") {
@@ -297,6 +334,27 @@ function renderDrawer() {
       <p class="hint" style="margin-top:6px">Balance left: <b>${money(me?.balance_cents ?? 0)}</b></p>
     </div>` : "";
     f.innerHTML = `<button class="btn primary block" id="doneBtn">Done</button>`;
+  } else if (view === "requests") {
+    t.textContent = "Request an item";
+    const form = me ? `<form id="requestForm" class="req-form">
+        <div class="field"><label for="reqName">What should the Emporium get?</label>
+          <input id="reqName" name="name" maxlength="100" required placeholder="e.g. Sour Patch Kids, a phone stand…" value="${esc(requestDraft)}"></div>
+        <div class="field"><label for="reqNote">Details <span class="hint">(optional)</span></label>
+          <textarea id="reqNote" name="note" maxlength="300" placeholder="Flavor, color, a link…"></textarea></div>
+        <p class="error" id="requestError" role="alert"></p>
+        <button class="btn primary block" id="sendRequest">Send request</button>
+      </form>`
+      : `<div class="confirm"><p>Sign in with your school Google account to request something or say you want it too.</p>
+          <button class="btn primary" id="signinForRequest">Sign in to request</button></div>`;
+    c.innerHTML = form + `<h3 style="margin:20px 0 6px">What people are asking for</h3>
+      ${requests.length ? requests.map(r => `<div class="req">
+          <div class="req-main"><b>${esc(r.name)}</b>${r.note ? `<small>${esc(r.note)}</small>` : ""}
+            ${r.status !== "open" ? `<span class="status-pill s-${r.status === "added" ? "ready" : "cancelled"}">${REQ_LABEL[r.status]}</span>` : ""}</div>
+          <button class="btn small vote ${r.mine ? "on" : ""}" data-vote="${r.id}" ${r.status !== "open" ? "disabled" : ""}
+            aria-pressed="${r.mine}" title="${r.mine ? "You want this" : "I want this too"}">▲ ${r.votes}</button>
+        </div>`).join("") : `<p class="hint">No requests yet. Be the first!</p>`}`;
+    f.innerHTML = "";
+    if (me) { const n = $("#reqName"); if (n && !requestDraft) setTimeout(() => n.focus(), 50); }
   } else if (view === "account") {
     if (!me) { view = "signin"; return renderDrawer(); }
     t.textContent = "Your account";
@@ -327,6 +385,16 @@ document.addEventListener("click", async e => {
   else if (t.id === "signinBtn") openDrawer("signin");
   else if (t.id === "accountBtn") { openDrawer("account"); await Promise.all([loadMyOrders(), loadMe()]); if (view === "account") renderDrawer(); }
   else if (t.id === "signOutBtn") signOut();
+  else if (t.id === "requestsBtn" || t.id === "requestsBtn2") openRequests("");
+  else if (t.id === "requestFromSearch") openRequests(query.trim());
+  else if (t.id === "signinForRequest") { afterSignin = "requests"; view = "signin"; renderDrawer(); }
+  else if (t.dataset.vote) {
+    if (!me) { afterSignin = "requests"; view = "signin"; return renderDrawer(); }
+    try {
+      const { request } = await api(`/api/requests/${t.dataset.vote}/vote`, { method: "POST" });
+      requests = requests.map(r => r.id === request.id ? request : r); renderDrawer();
+    } catch (ex) { toast(ex.message); }
+  }
   else if (t.id === "closeDrawer" || t.id === "doneBtn") closeDrawer();
   else if (t.id === "toCheckout") { view = me ? "checkout" : "signin"; renderDrawer(); if (me) loadMe(); }
   else if (t.id === "backToCart") { view = "cart"; renderDrawer(); }
@@ -336,6 +404,17 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(
 $("#search").addEventListener("input", e => { query = e.target.value; renderGrid(); });
 
 document.addEventListener("submit", async e => {
+  if (e.target.id === "requestForm") {
+    e.preventDefault();
+    const btn = $("#sendRequest"), err = $("#requestError");
+    btn.disabled = true; err.textContent = "";
+    try {
+      const { request, merged } = await api("/api/requests", { method: "POST", body: JSON.stringify({ name: e.target.name.value, note: e.target.note.value }) });
+      toast(merged ? `Someone already asked for that, so we added your vote` : `Thanks! We'll look into “${request.name}”`);
+      requestDraft = ""; requests = (await api("/api/requests")).requests; renderDrawer();
+    } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+    return;
+  }
   if (e.target.id !== "checkoutForm") return;
   e.preventDefault();
   const btn = $("#placeOrder"), err = $("#checkoutError");
@@ -374,7 +453,8 @@ document.addEventListener("pointermove", e => {
 (async () => {
   try { config = await api("/api/config"); } catch {}
   renderAccount();
-  await Promise.all([loadProducts(), loadMe()]);
+  await loadMe();
+  if (me) { showStore(); await loadProducts(); } else showGate();
 })();
 setInterval(loadProducts, 60000);
 </script>

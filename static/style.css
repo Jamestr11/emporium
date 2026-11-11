@@ -240,3 +240,22 @@ footer.site { color: var(--muted); font-size: 13px; padding: 24px 0 40px; text-a
 .mo-items { font-size: 13px; }
 .weekly { font-size: 12px; color: var(--muted); margin: 0 4px; white-space: nowrap; }
 #account { display: flex; align-items: center; }
+
+/* Product requests */
+.request-cta { margin-top: 16px; font-weight: 500; }
+.request-cta b { font-weight: 700; }
+.linkish { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.req-form .field { margin-bottom: 10px; }
+.req { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+.req-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.req-main small { color: var(--muted); overflow-wrap: anywhere; }
+.req-main .status-pill { justify-self: start; }
+.vote { min-width: 56px; font-variant-numeric: tabular-nums; }
+.vote.on { background: var(--accent); color: #1f1a10; border-color: transparent; }
+.login .gsi { display: flex; justify-content: center; min-height: 44px; margin: 14px 0 4px; }
+.login .or { text-align: center; margin: 14px 0 6px; }
+
+/* Sign-in gate */
+.gate { max-width: 460px; margin: 8px auto 40px; text-align: center; }
+.gate p { color: var(--muted); }
+.gate .gsi { display: flex; justify-content: center; min-height: 44px; margin: 18px 0 6px; }

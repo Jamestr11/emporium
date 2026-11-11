@@ -42,6 +42,9 @@ ORDER_STATUSES = ("new", "ready", "picked_up", "cancelled")
 STUDENT_DOMAIN = os.environ.get("STUDENT_EMAIL_DOMAIN", "alpha.school").lower().lstrip("@")
 STUDENT_SESSION_DAYS = 30
 GOOGLE_TOKENINFO_URL = os.environ.get("GOOGLE_TOKENINFO_URL", "https://oauth2.googleapis.com/tokeninfo")
+# Staff by Google account: these school emails can open /admin by signing in with Google,
+# no staff password needed. Comma-separated, set on the server (not in the code).
+ADMIN_EMAILS = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
 MAX_BALANCE_CENTS = 100_000  # $1,000 cap guards against typos when staff add money
 
 # Weekly limit: each student may buy this many items per week (staff can change it in Settings;
@@ -135,6 +138,21 @@ def init_db():
                 order_id INTEGER,
                 note TEXT NOT NULL DEFAULT '',
                 created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                name TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',   -- open | added | declined
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS request_votes (
+                request_id INTEGER NOT NULL REFERENCES requests(id) ON DELETE CASCADE,
+                student_id INTEGER NOT NULL REFERENCES students(id),
+                created_at REAL NOT NULL,
+                PRIMARY KEY (request_id, student_id)
             );
             CREATE TABLE IF NOT EXISTS order_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -426,7 +444,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        for k, v in (extra_headers or {}).items():
+        headers = extra_headers or {}
+        for k, v in (headers.items() if isinstance(headers, dict) else headers):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
@@ -455,12 +474,23 @@ class Handler(BaseHTTPRequestHandler):
                 return value.strip().strip('"')
         return None
 
+    def google_admin(self):
+        """The signed-in Google account, if it's on the ADMIN_EMAILS list."""
+        if not ADMIN_EMAILS:
+            return None
+        st = self.student()
+        return st if st and st["email"].lower() in ADMIN_EMAILS else None
+
     def is_admin(self):
-        return valid_session(self.cookie("em_session"))
+        return valid_session(self.cookie("em_session")) or bool(self.google_admin())
 
     def require_admin(self):
         if not self.is_admin():
             raise ApiError(401, "Please sign in.")
+        # The Google sign-in cookie is SameSite=Lax, so also refuse changes sent from other sites.
+        origin = self.headers.get("Origin")
+        if self.command != "GET" and origin and origin.split("://", 1)[-1] != self.headers.get("Host", ""):
+            raise ApiError(403, "Request from another site refused.")
 
     def student(self):
         token = self.cookie("em_student")
@@ -543,7 +573,14 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------- routes ----------
 
+def require_viewer(h):
+    """The store is only for signed-in students (and staff)."""
+    if not (h.student() or h.is_admin()):
+        raise ApiError(401, "Sign in with your school Google account to see the store.")
+
+
 def get_products(h, q):
+    require_viewer(h)
     rows = DB.execute("SELECT * FROM products WHERE active=1 ORDER BY category, name").fetchall()
     h.send_json(200, {"products": [product_dict(r) for r in rows]})
 
@@ -706,7 +743,10 @@ def admin_login(h, q):
 
 
 def admin_setup(h, q):
-    """First run only: whoever opens /admin first chooses the staff password."""
+    """First run only: whoever opens /admin first chooses the staff password. When admin Google
+    accounts are configured, only they can create it, so nobody else can claim the staff page."""
+    if ADMIN_EMAILS and not h.google_admin():
+        raise ApiError(403, "Sign in with an admin Google account first.")
     pw = valid_new_password(h.read_body().get("password"))
     with db_lock, DB:
         if ENV_ADMIN_PASSWORD or DB.execute("SELECT 1 FROM settings WHERE key='admin_pw_hash'").fetchone():
@@ -720,7 +760,9 @@ def admin_change_password(h, q):
     if ENV_ADMIN_PASSWORD:
         raise ApiError(409, "This password is set by the server's ADMIN_PASSWORD setting; change it there.")
     body = h.read_body()
-    if not check_password(str(body.get("current", ""))):
+    if needs_setup():
+        pass  # a Google admin is setting the first staff password; there's no current one
+    elif not check_password(str(body.get("current", ""))):
         time.sleep(0.5)
         raise ApiError(403, "Current password is wrong.")
     set_setting("admin_pw_hash", hash_password(valid_new_password(body.get("new"))))
@@ -728,11 +770,20 @@ def admin_change_password(h, q):
 
 
 def admin_logout(h, q):
-    h.send_json(200, {"ok": True}, {"Set-Cookie": "em_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"})
+    h.send_json(200, {"ok": True}, [
+        ("Set-Cookie", "em_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"),
+        ("Set-Cookie", "em_student=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"),
+    ])
 
 
 def admin_me(h, q):
-    h.send_json(200, {"signed_in": h.is_admin(), "needs_setup": needs_setup()})
+    ga = h.google_admin()
+    h.send_json(200, {
+        "signed_in": h.is_admin(),
+        "needs_setup": needs_setup(),
+        "google_admins": bool(ADMIN_EMAILS),
+        "google_admin": ga["email"] if ga else None,
+    })
 
 
 def admin_products(h, q):
@@ -989,6 +1040,105 @@ def admin_update_order(h, q, oid):
     h.send_json(200, {"order": order_dict(row, include_contact=True)})
 
 
+# ---------- product requests ----------
+# Students ask for things the store doesn't carry. Others tap "Me too", so staff can see what's wanted.
+
+REQUEST_STATUSES = ("open", "added", "declined")
+REQUESTS_PER_DAY = 3
+
+
+def _request_rows(student_id, where="", args=(), limit=200):
+    return DB.execute(
+        f"""SELECT r.*, s.name AS student_name, s.email AS student_email,
+                   (SELECT COUNT(*) FROM request_votes v WHERE v.request_id=r.id) AS votes,
+                   EXISTS(SELECT 1 FROM request_votes v WHERE v.request_id=r.id AND v.student_id=?) AS mine
+            FROM requests r JOIN students s ON s.id=r.student_id {where}
+            ORDER BY (r.status='open') DESC, votes DESC, r.created_at DESC LIMIT {int(limit)}""",
+        (student_id or 0, *args),
+    ).fetchall()
+
+
+def request_dict(r, staff=False):
+    d = {"id": r["id"], "name": r["name"], "note": r["note"], "status": r["status"],
+         "votes": r["votes"], "mine": bool(r["mine"]), "created_at": r["created_at"]}
+    if staff:
+        d.update(student_name=r["student_name"], student_email=r["student_email"], updated_at=r["updated_at"])
+    return d
+
+
+def list_requests(h, q):
+    require_viewer(h)
+    st = h.student()
+    rows = _request_rows(st["id"] if st else None, "WHERE r.status != 'declined'", limit=100)
+    h.send_json(200, {"requests": [request_dict(r) for r in rows]})
+
+
+def create_request(h, q):
+    st = h.student()
+    if not st:
+        raise ApiError(401, "Sign in with your school Google account to request something.")
+    body = h.read_body()
+    name = " ".join(str(body.get("name") or "").split())[:100]
+    note = str(body.get("note") or "").strip()[:300]
+    if len(name) < 2:
+        raise ApiError(400, "Tell us what you'd like the store to get.")
+    now = time.time()
+    with db_lock, DB:
+        same = DB.execute("SELECT id FROM requests WHERE status='open' AND lower(name)=lower(?)", (name,)).fetchone()
+        if same:  # someone already asked: count it as a "me too"
+            DB.execute("INSERT OR IGNORE INTO request_votes (request_id, student_id, created_at) VALUES (?,?,?)", (same["id"], st["id"], now))
+            rid, merged = same["id"], True
+        else:
+            recent = DB.execute("SELECT COUNT(*) FROM requests WHERE student_id=? AND created_at>?", (st["id"], now - 86400)).fetchone()[0]
+            if recent >= REQUESTS_PER_DAY:
+                raise ApiError(429, f"You can make {REQUESTS_PER_DAY} requests a day. Tap \"Me too\" on ones you like instead.")
+            rid = DB.execute("INSERT INTO requests (student_id, name, note, created_at, updated_at) VALUES (?,?,?,?,?)",
+                             (st["id"], name, note, now, now)).lastrowid
+            DB.execute("INSERT INTO request_votes (request_id, student_id, created_at) VALUES (?,?,?)", (rid, st["id"], now))
+            merged = False
+        row = _request_rows(st["id"], "WHERE r.id=?", (rid,), 1)[0]
+    h.send_json(200, {"request": request_dict(row), "merged": merged})
+
+
+def vote_request(h, q, rid):
+    st = h.student()
+    if not st:
+        raise ApiError(401, "Sign in to say you want this too.")
+    with db_lock, DB:
+        r = DB.execute("SELECT status FROM requests WHERE id=?", (rid,)).fetchone()
+        if not r or r["status"] == "declined":
+            raise ApiError(404, "Request not found.")
+        if DB.execute("SELECT 1 FROM request_votes WHERE request_id=? AND student_id=?", (rid, st["id"])).fetchone():
+            DB.execute("DELETE FROM request_votes WHERE request_id=? AND student_id=?", (rid, st["id"]))
+        else:
+            DB.execute("INSERT INTO request_votes (request_id, student_id, created_at) VALUES (?,?,?)", (rid, st["id"], time.time()))
+        row = _request_rows(st["id"], "WHERE r.id=?", (rid,), 1)[0]
+    h.send_json(200, {"request": request_dict(row)})
+
+
+def admin_requests(h, q):
+    h.require_admin()
+    rows = _request_rows(None, limit=500)
+    open_count = DB.execute("SELECT COUNT(*) FROM requests WHERE status='open'").fetchone()[0]
+    h.send_json(200, {"requests": [request_dict(r, staff=True) for r in rows], "open": open_count})
+
+
+def admin_update_request(h, q, rid):
+    h.require_admin()
+    body = h.read_body()
+    with db_lock, DB:
+        if body.get("delete"):
+            DB.execute("DELETE FROM request_votes WHERE request_id=?", (rid,))
+            DB.execute("DELETE FROM requests WHERE id=?", (rid,))
+            return h.send_json(200, {"ok": True})
+        status = body.get("status")
+        if status not in REQUEST_STATUSES:
+            raise ApiError(400, "Unknown status.")
+        if not DB.execute("UPDATE requests SET status=?, updated_at=? WHERE id=?", (status, time.time(), rid)).rowcount:
+            raise ApiError(404, "Request not found.")
+    h.send_json(200, {"ok": True})
+
+
 def admin_students(h, q):
     h.require_admin()
     term = (q.get("q") or [""])[0].strip().lower()
@@ -1042,6 +1192,11 @@ ROUTES = [
     (r"/api/config", "GET", public_config),
     (r"/api/auth/google", "POST", auth_google),
     (r"/api/auth/logout", "POST", auth_logout),
+    (r"/api/requests", "GET", list_requests),
+    (r"/api/requests", "POST", create_request),
+    (r"/api/requests/(\d+)/vote", "POST", vote_request),
+    (r"/api/admin/requests", "GET", admin_requests),
+    (r"/api/admin/requests/(\d+)", "PATCH", admin_update_request),
     (r"/api/admin/students", "GET", admin_students),
     (r"/api/admin/students/(\d+)", "GET", admin_student),
     (r"/api/admin/students/(\d+)/balance", "POST", admin_student_balance),

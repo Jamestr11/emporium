@@ -89,7 +89,7 @@ def main():
         r = call(staff, f"/api/admin/students/{sid}/balance", {"amount": "10", "note": "Cash"}); check("staff adds $10", r[1]["student"]["balance_cents"] == 1000, r)
         r = call(staff, f"/api/admin/students/{sid}/balance", {"amount": "-50"}); check("can't go negative", r[0] == 409, r)
         r = call(alice, f"/api/admin/students/{sid}/balance", {"amount": "100"}); check("students can't add money", r[0] == 401, r)
-        price = [p for p in call(anon, "/api/products")[1]["products"] if p["id"] == 1][0]["price_cents"]
+        price = [p for p in call(staff, "/api/products")[1]["products"] if p["id"] == 1][0]["price_cents"]
         r = call(alice, "/api/orders", {"items": [{"id": 1, "qty": 1}]}); check("order paid from balance", r[0] == 201 and r[1]["balance_cents"] == 1000 - price, r)
         oid = r[1]["order"]["id"]
         check("bob can't see alice's orders", call(bob, "/api/me/orders")[1]["orders"] == [])

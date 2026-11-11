@@ -2,7 +2,7 @@
 
 Pickup-order website for the school store.
 
-- **Store** (`/`) — students sign in with their school Google account, browse items, and order. Orders are paid from their Emporium balance; they get a code (like `EM-4K7QZ`) to show at pickup. Sold-out items can't be ordered.
+- **Store** (`/`) — students must sign in with their school Google account to see anything; then they browse items and order. Orders are paid from their Emporium balance; they get a code (like `EM-4K7QZ`) to show at pickup. Sold-out items can't be ordered.
 - **Staff** (`/admin`) — password-protected. See incoming orders (New → Ready → Picked up, or Cancel, which restocks the items and refunds the student), manage student balances, and manage inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
 
 Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install -r requirements.txt`. Everything else works without it.
@@ -14,6 +14,14 @@ Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install 
 - Each student has an **Emporium balance**. Orders are paid from it; a student can't order more than they have. Cancelling an order refunds it automatically.
 - Staff → **Students** tab: search for a student, **Add money** when they hand over cash (a negative amount fixes a mistake), and **History** shows every deposit, order and refund.
 - Students see their balance and their orders (New → Ready → Picked up) under their name on the store.
+
+### Staff sign-in with Google
+
+Set `ADMIN_EMAILS` on the server (comma-separated school emails). Those people open `/admin`, press **Sign in with Google**, and get the full staff page — no password needed. While `ADMIN_EMAILS` is set, only they can create the shared staff password (Password button), so nobody else can claim the staff page.
+
+### Requests
+
+Students tap **Request it** on the store to ask for things the Emporium doesn't carry (3 new requests a day each). If someone already asked, it counts as a vote; others can tap **▲** to say they want it too. Staff → **Requests** tab lists them most-wanted first: **✨ Find & add** hands it to Add by name (and marks it added once saved), or **Mark added** / **Decline**.
 
 ### Turning on Sign in with Google (one time, ~10 minutes)
 
@@ -32,6 +40,7 @@ To allow a different email domain, set `STUDENT_EMAIL_DOMAIN` on the server.
 
 ```bash
 python3 tests/test_accounts.py
+python3 tests/test_staff_and_requests.py
 ```
 
 Runs the real server against a stand-in for Google and checks sign-in rules, balances, refunds, and that two simultaneous orders can't overspend.
@@ -99,6 +108,7 @@ Anything that runs Python and keeps a disk works (Railway, Render, Fly.io, a sch
 | `SECURE_COOKIES` | off | Set to `1` when served over HTTPS |
 | `PORT` | `8000` | Port to listen on (`server.py` only) |
 | `GOOGLE_CLIENT_ID` | unset | Optional: the Google client ID for student sign-in, instead of saving it in Settings |
+| `ADMIN_EMAILS` | unset | School emails that can open the staff page by signing in with Google |
 | `STUDENT_EMAIL_DOMAIN` | `alpha.school` | Only Google accounts with this email domain can sign in |
 | `ADMIN_PASSWORD` | unset | Optional: fix the staff password from the server instead of creating it on the staff page |
 | `SECRET_KEY` | generated and stored in the database | Optional: signs staff sign-in sessions |
