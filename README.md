@@ -10,6 +10,7 @@ Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install 
 ## Student accounts and balances
 
 - Students tap **Sign in** on the store and use their school Google account. Only **@alpha.school** accounts are accepted (the server checks this, not just the page). The first sign-in creates their account.
+- **Weekly limit:** each student can buy **1 item per week** by default (resets Monday, Texas time; cancelled orders don't count). Change it in Settings → Weekly limit (0 = no limit). Set `STORE_TIMEZONE` to use another time zone.
 - Each student has an **Emporium balance**. Orders are paid from it; a student can't order more than they have. Cancelling an order refunds it automatically.
 - Staff → **Students** tab: search for a student, **Add money** when they hand over cash (a negative amount fixes a mistake), and **History** shows every deposit, order and refund.
 - Students see their balance and their orders (New → Ready → Picked up) under their name on the store.

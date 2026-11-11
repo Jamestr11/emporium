@@ -129,6 +129,15 @@
         <button class="btn primary">Save key</button>
       </div>
     </form>
+    <form id="limitForm" style="border-top:1px solid var(--line);margin-top:16px;padding-top:4px">
+      <h3 style="font-size:16px;margin:12px 0 4px">Weekly limit</h3>
+      <div class="toolbar" style="margin:0">
+        <label for="limitInput" style="flex:1">Items each student can buy per week <span class="hint">(0 = no limit · resets Monday)</span></label>
+        <input id="limitInput" name="limit" type="number" min="0" max="100" step="1" required style="width:80px;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg)">
+        <button class="btn primary small">Save</button>
+      </div>
+      <p class="error" id="limitError"></p>
+    </form>
     <form id="googleForm" style="border-top:1px solid var(--line);margin-top:16px;padding-top:4px">
       <h3 style="font-size:16px;margin:12px 0 4px">Student sign-in (Google)</h3>
       <p class="hint" style="margin:0 0 8px" id="googleStatus">Loading…</p>
@@ -480,6 +489,7 @@ async function openSettings() {
       ? `✓ Student sign-in is on. Only <b>@${esc(st.student_domain)}</b> accounts can sign in.${st.google_client_id_from_env ? " (Set on the server.)" : ""}`
       : `Not set up yet — students can't sign in until you add a Google client ID. Only <b>@${esc(st.student_domain)}</b> accounts will be allowed.`;
     $("#cidInput").value = st.google_client_id || "";
+    $("#limitInput").value = st.weekly_item_limit;
     $("#cidInput").disabled = st.google_client_id_from_env;
     $("#originHint").textContent = location.origin;
   } catch {}
@@ -736,6 +746,14 @@ document.addEventListener("submit", async e => {
       await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ ai_key: f.key.value.trim() }) });
       toast("AI key saved"); $("#settingsDialog").close(); refreshAiKey();
     } catch (ex) { $("#settingsError").textContent = ex.message; }
+    return;
+  } else if (fid === "limitForm") {
+    e.preventDefault();
+    try {
+      await api("/api/admin/settings", { method: "POST", body: JSON.stringify({ weekly_item_limit: f.limit.value }) });
+      const n = Number(f.limit.value); toast(n ? `Limit saved: ${n} ${n === 1 ? "item" : "items"} per student per week` : "Weekly limit turned off");
+      $("#limitError").textContent = "";
+    } catch (ex) { $("#limitError").textContent = ex.message; }
     return;
   } else if (fid === "googleForm") {
     e.preventDefault();

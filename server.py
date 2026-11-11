@@ -44,6 +44,11 @@ STUDENT_SESSION_DAYS = 30
 GOOGLE_TOKENINFO_URL = os.environ.get("GOOGLE_TOKENINFO_URL", "https://oauth2.googleapis.com/tokeninfo")
 MAX_BALANCE_CENTS = 100_000  # $1,000 cap guards against typos when staff add money
 
+# Weekly limit: each student may buy this many items per week (staff can change it in Settings;
+# 0 = no limit). Weeks start Monday 00:00 in the school's time zone; cancelled orders don't count.
+DEFAULT_WEEKLY_ITEMS = 1
+STORE_TZ = os.environ.get("STORE_TIMEZONE", "America/Chicago")
+
 # Writes are serialized with db_lock so stock checks and decrements can't interleave.
 db_lock = threading.Lock()
 
@@ -198,6 +203,40 @@ def order_dict(row, include_contact=False):
         d["note"] = row["note"]
         d["student_id"] = row["student_id"]
     return d
+
+
+def weekly_limit():
+    v = get_setting("weekly_item_limit")
+    return int(v) if v is not None and v.isdigit() else DEFAULT_WEEKLY_ITEMS
+
+
+def week_bounds(now=None):
+    """(start, next_start) of the current Monday-to-Monday week, as Unix timestamps."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo(STORE_TZ)
+    local = datetime.fromtimestamp(now or time.time(), tz)
+    start = (local - timedelta(days=local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    nxt = start + timedelta(days=7)
+    # rebuild from wall-clock dates so a daylight-saving change mid-week doesn't shift Monday midnight
+    start = datetime(start.year, start.month, start.day, tzinfo=tz)
+    nxt = datetime(nxt.year, nxt.month, nxt.day, tzinfo=tz)
+    return start.timestamp(), nxt.timestamp()
+
+
+def items_this_week(student_id):
+    start, _ = week_bounds()
+    return DB.execute(
+        "SELECT COALESCE(SUM(oi.qty), 0) FROM order_items oi JOIN orders o ON o.id = oi.order_id "
+        "WHERE o.student_id=? AND o.status != 'cancelled' AND o.created_at >= ?", (student_id, start)
+    ).fetchone()[0]
+
+
+def weekly_status(student_id):
+    limit = weekly_limit()
+    used = items_this_week(student_id)
+    _, resets = week_bounds()
+    return {"limit": limit, "used": used, "remaining": None if limit == 0 else max(0, limit - used), "resets_at": resets}
 
 
 def student_dict(row):
@@ -540,6 +579,14 @@ def create_order(h, q):
                 raise ApiError(409, msg)
             lines.append((p, qty))
             total += p["price_cents"] * qty
+        limit = weekly_limit()
+        if limit:
+            used, qty = items_this_week(student["id"]), sum(wanted.values())
+            if used + qty > limit:
+                left = max(0, limit - used)
+                each = "item" if limit == 1 else "items"
+                raise ApiError(409, (f"You can buy {limit} {each} a week. " +
+                    (f"You have {left} left this week." if left else "You've used this week's — it resets on Monday.")))
         balance = DB.execute("SELECT balance_cents FROM students WHERE id=?", (student["id"],)).fetchone()["balance_cents"]
         if balance < total:
             raise ApiError(409, f"Not enough balance: this order is ${total / 100:.2f} and you have ${balance / 100:.2f}. "
@@ -632,7 +679,7 @@ def auth_logout(h, q):
 
 def me(h, q):
     st = h.student()
-    h.send_json(200, {"student": student_dict(st) if st else None})
+    h.send_json(200, {"student": student_dict(st) if st else None, "weekly": weekly_status(st["id"]) if st else None})
 
 
 def session_cookie():
@@ -791,6 +838,7 @@ def admin_get_settings(h, q):
         "google_client_id": google_client_id(),
         "google_client_id_from_env": bool(os.environ.get("GOOGLE_CLIENT_ID")),
         "student_domain": STUDENT_DOMAIN,
+        "weekly_item_limit": weekly_limit(),
     })
 
 
@@ -807,6 +855,14 @@ def admin_save_settings(h, q):
                            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key,))
             else:
                 DB.execute("DELETE FROM settings WHERE key='anthropic_api_key'")
+    if "weekly_item_limit" in body:
+        try:
+            n = int(body.get("weekly_item_limit"))
+        except (TypeError, ValueError):
+            raise ApiError(400, "Items per week must be a whole number (0 means no limit).")
+        if not 0 <= n <= 100:
+            raise ApiError(400, "Items per week must be between 0 and 100.")
+        set_setting("weekly_item_limit", str(n))
     if "google_client_id" in body:
         cid = str(body.get("google_client_id") or "").strip()
         if cid and not re.fullmatch(r"[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com", cid):

@@ -238,3 +238,5 @@ footer.site { color: var(--muted); font-size: 13px; padding: 24px 0 40px; text-a
 .mo-head { display: flex; align-items: center; gap: 8px; }
 .mo-head b:first-child { font-family: ui-monospace, Menlo, monospace; }
 .mo-items { font-size: 13px; }
+.weekly { font-size: 12px; color: var(--muted); margin: 0 4px; white-space: nowrap; }
+#account { display: flex; align-items: center; }

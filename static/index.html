@@ -57,6 +57,7 @@ let query = "";
 let cart = load("em_cart", {});          // { productId: qty }
 let view = "cart";                         // cart | checkout | done | account | signin
 let me = null;                             // signed-in student, or null
+let weekly = null;                         // { limit, used, remaining, resets_at } for the signed-in student
 let config = { google_client_id: "", student_domain: "alpha.school" };
 let lastOrder = null, myOrders = [];
 
@@ -148,6 +149,13 @@ function setQty(id, qty) {
   const p = products.find(p => p.id == id);
   if (!p) return;
   if (qty > p.stock) { toast(`Only ${p.stock} available`); qty = p.stock; }
+  if (weekly && weekly.remaining !== null) {
+    const others = cartCount() - (cart[id] || 0);
+    if (others + qty > weekly.remaining) {
+      toast(weekly.remaining ? `You can buy ${weekly.limit} ${weekly.limit === 1 ? "item" : "items"} a week — ${weekly.remaining} left this week.` : "You've used this week's item — it resets on Monday.");
+      qty = Math.max(0, weekly.remaining - others);
+    }
+  }
   if (qty <= 0) delete cart[id]; else cart[id] = qty;
   save("em_cart", cart);
   renderGrid(); renderCartBadge();
@@ -156,7 +164,7 @@ function setQty(id, qty) {
 
 // ---------- account (Sign in with Google) ----------
 async function loadMe() {
-  try { me = (await api("/api/me")).student; } catch { me = null; }
+  try { const r = await api("/api/me"); me = r.student; weekly = r.weekly; } catch { me = null; weekly = null; }
   renderAccount();
 }
 
@@ -168,6 +176,7 @@ function renderAccount() {
     const first = (me.name || me.email).split(" ")[0];
     const avatar = me.picture ? `<img class="avatar" src="${esc(me.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="avatar">${esc(first[0] || "?")}</span>`;
     el.innerHTML = `<button class="btn small acct" id="accountBtn" aria-label="Your account">${avatar}<span class="hide-sm">${esc(first)}</span><span class="bal">${money(me.balance_cents)}</span></button>`;
+    if (weekly && weekly.remaining !== null) el.innerHTML += `<span class="weekly hide-sm" title="Resets Monday">${weekly.remaining} ${weekly.remaining === 1 ? "item" : "items"} left this week</span>`;
   }
   if ($("#drawer").classList.contains("open") && ["checkout", "account", "signin"].includes(view)) renderDrawer();
 }
@@ -197,6 +206,7 @@ async function renderGoogleButton() {
 async function onGoogleCredential(resp) {
   try {
     me = (await api("/api/auth/google", { method: "POST", body: JSON.stringify({ credential: resp.credential }) })).student;
+    await loadMe();
     toast(`Signed in as ${me.email}`);
     renderAccount();
     if (view === "signin") { view = cartCount() ? "checkout" : "account"; if (view === "account") await loadMyOrders(); renderDrawer(); }
@@ -258,6 +268,7 @@ function renderDrawer() {
     if (!me) { view = "signin"; return renderDrawer(); }
     t.textContent = "Checkout";
     const total = cartTotal(), after = me.balance_cents - total, short = after < 0;
+    const overWeek = weekly && weekly.remaining !== null && cartCount() > weekly.remaining;
     c.innerHTML = `<form id="checkoutForm">
       ${cartLines().map(({ p, qty }) => `<div class="line"><div class="n">${esc(p.name)}</div><span>${qty} × ${money(p.price_cents)}</span></div>`).join("")}
       <div class="sums">
@@ -266,10 +277,11 @@ function renderDrawer() {
         <div class="${short ? "neg" : ""}"><b>Balance after</b><b>${short ? "Not enough" : money(after)}</b></div>
       </div>
       ${short ? `<p class="error">You need ${money(-after)} more. Ask the Emporium staff to add money to your account, or remove something from your cart.</p>` : ""}
+      ${overWeek ? `<p class="error">You can buy ${weekly.limit} ${weekly.limit === 1 ? "item" : "items"} a week and have ${weekly.remaining} left this week (it resets Monday). Remove ${cartCount() - weekly.remaining} from your cart.</p>` : ""}
       <div class="field"><label for="note">Note for the store <span class="hint">(optional)</span></label><textarea id="note" name="note" maxlength="300" placeholder="e.g. I'll come by at lunch"></textarea></div>
       <p class="error" id="checkoutError" role="alert"></p>
     </form>`;
-    f.innerHTML = `<button class="btn primary block" id="placeOrder" type="submit" form="checkoutForm" ${short ? "disabled" : ""}>Pay ${money(total)} from balance</button>
+    f.innerHTML = `<button class="btn primary block" id="placeOrder" type="submit" form="checkoutForm" ${short || overWeek ? "disabled" : ""}>Pay ${money(total)} from balance</button>
       <button class="btn block" id="backToCart">Back to cart</button>`;
   } else if (view === "done") {
     const o = lastOrder;
@@ -290,6 +302,7 @@ function renderDrawer() {
         <div><b>${esc(me.name || me.email)}</b><small>${esc(me.email)}</small></div>
         <div class="bal-big"><small>Balance</small>${money(me.balance_cents)}</div>
       </div>
+      ${weekly && weekly.remaining !== null ? `<p class="hint"><b>${weekly.remaining} of ${weekly.limit}</b> ${weekly.limit === 1 ? "item" : "items"} left this week · resets Monday</p>` : ""}
       <p class="hint">To add money, give cash to the Emporium staff and they'll put it on your account.</p>
       <h3 style="margin:18px 0 6px">Your orders</h3>
       ${myOrders.length ? myOrders.map(o => `<div class="my-order">
@@ -330,6 +343,7 @@ document.addEventListener("submit", async e => {
       note: e.target.note.value, items: cartLines().map(l => ({ id: l.p.id, qty: l.qty })) }) });
     lastOrder = res.order;
     if (me) me.balance_cents = res.balance_cents;
+    loadMe();
     cart = {}; save("em_cart", cart);
     renderAccount();
     view = "done"; renderDrawer();

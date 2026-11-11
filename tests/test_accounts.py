@@ -75,6 +75,8 @@ def main():
         call(staff, "/api/admin/login", {"password": "test-only-pass"})
         r = call(staff, "/api/admin/settings", {"google_client_id": "not-a-client-id"}); check("bad client id rejected", r[0] == 400, r)
         r = call(staff, "/api/admin/settings", {"google_client_id": CID}); check("client id saved", r[0] == 200, r)
+        r = call(staff, "/api/admin/settings", {}); check("weekly limit defaults to 1", r[1]["weekly_item_limit"] == 1, r)
+        call(staff, "/api/admin/settings", {"weekly_item_limit": 0})  # off for the balance tests below
         for tok, code, label in [("tok-gmail", 403, "gmail rejected"), ("tok-lookalike", 403, "@notalpha.school rejected"),
                                  ("tok-wrongaud", 401, "token for another site rejected"), ("tok-unverified", 403, "unverified email rejected"),
                                  ("tok-expired", 401, "expired token rejected"), ("forged-token", 401, "forged token rejected")]:
@@ -101,6 +103,21 @@ def main():
         def go(pid): out.append(call(alice, "/api/orders", {"items": [{"id": pid, "qty": 1}]})[0])
         ts = [threading.Thread(target=go, args=(p,)) for p in (3, 4)]; [t.start() for t in ts]; [t.join() for t in ts]
         check("simultaneous orders can't overspend", sorted(out) == [201, 409] and call(alice, "/api/me")[1]["student"]["balance_cents"] == 100, out)
+        # ---- weekly limit ----
+        call(staff, "/api/admin/settings", {"weekly_item_limit": 1})
+        bid = call(bob, "/api/me")[1]["student"]["id"]
+        call(staff, f"/api/admin/students/{bid}/balance", {"amount": "100"})
+        r = call(bob, "/api/me"); check("bob sees 1 item left", r[1]["weekly"]["remaining"] == 1, r)
+        r = call(bob, "/api/orders", {"items": [{"id": 2, "qty": 2}]}); check("2 items in one order blocked", r[0] == 409 and "1 item a week" in r[1]["error"], r)
+        r = call(bob, "/api/orders", {"items": [{"id": 5, "qty": 1}]}); check("first item this week allowed", r[0] == 201, r)
+        boid = r[1]["order"]["id"]
+        r = call(bob, "/api/orders", {"items": [{"id": 6, "qty": 1}]}); check("second item this week blocked", r[0] == 409 and "resets on Monday" in r[1]["error"], r)
+        check("bob sees 0 left", call(bob, "/api/me")[1]["weekly"]["remaining"] == 0)
+        call(staff, f"/api/admin/orders/{boid}", {"status": "cancelled"}, "PATCH")
+        r = call(bob, "/api/orders", {"items": [{"id": 6, "qty": 1}]}); check("cancelled order frees the week's item", r[0] == 201, r)
+        r = call(staff, "/api/admin/settings", {"weekly_item_limit": 2}); check("staff can raise the limit", r[1]["weekly_item_limit"] == 2, r)
+        r = call(bob, "/api/orders", {"items": [{"id": 7, "qty": 1}]}); check("raised limit allows one more", r[0] == 201, r)
+        r = call(staff, "/api/admin/settings", {"weekly_item_limit": -1}); check("negative limit rejected", r[0] == 400, r)
         g = 'g_state={"i_l":0,"i_e":{"enable_itp_optimization":24}}'
         sess = [c for c in ajar if c.name == "em_student"][0]
         req = urllib.request.Request(B + "/api/me", headers={"Cookie": f"{g}; em_student={sess.value}"})
