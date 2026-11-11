@@ -42,7 +42,7 @@
     </div>
   </main>
 
-  <footer class="site">The Emporium · Pay with your Emporium balance · <button class="linkish" id="requestsBtn2">Request an item</button> · <a href="/admin">Staff</a></footer>
+  <footer class="site">The Emporium · Pay with your Emporium balance <span id="reqFoot"> · <button class="linkish" id="requestsBtn2">Request an item</button></span> · <a href="/admin">Staff</a></footer>
 
   <button class="btn primary mobile-cart" id="mobileCart"><span>View cart · <b id="mobileCount">0</b></span><b id="mobileTotal">$0.00</b></button>
 
@@ -92,12 +92,12 @@ async function api(path, opts = {}) {
 // ---------- sign-in gate: only signed-in students see the store ----------
 function showGate() {
   $("#gate").hidden = false; $("#storeBody").hidden = true;
-  for (const id of ["#requestsBtn", "#requestsBtn2", "#mobileCart", "#cartBtn"]) $(id).hidden = true;
+  for (const id of ["#requestsBtn", "#reqFoot", "#mobileCart", "#cartBtn"]) $(id).hidden = true;
   products = []; renderGoogleButton("#gsiGate");
 }
 function showStore() {
   $("#gate").hidden = true; $("#storeBody").hidden = false;
-  for (const id of ["#requestsBtn", "#requestsBtn2", "#mobileCart", "#cartBtn"]) $(id).hidden = false;
+  for (const id of ["#requestsBtn", "#reqFoot", "#mobileCart", "#cartBtn"]) $(id).hidden = false;
 }
 
 // ---------- products ----------
