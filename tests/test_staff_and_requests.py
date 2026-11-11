@@ -101,6 +101,35 @@ def main():
         check("staff sign out also ends Google session", not call(bob, "/api/admin/me")[1]["signed_in"])
         call(bob, "/api/auth/google", {"credential": "tok-bob" + PAD})
 
+        # ---- orders wait for approval; stock comes off when approved ----
+        call(bob, "/api/admin/settings", {"weekly_item_limit": 0})
+        def shelf(): p = [x for x in call(bob, "/api/admin/products")[1]["products"] if x["id"] == 1][0]; return p["stock"], p["on_hold"]
+        def public(): return [x for x in call(alice, "/api/products")[1]["products"] if x["id"] == 1][0]["stock"]
+        start = shelf()[0]
+        call(bob, "/api/admin/products/1", {"stock": 1}, "PATCH")
+        r = call(alice, "/api/orders", {"items": [{"id": 1, "qty": 1}]}); check("kid orders the last one", r[0] == 201 and r[1]["order"]["status"] == "new", r)
+        o1 = r[1]["order"]["id"]
+        check("waiting order doesn't change the shelf count", shelf() == (1, 1), shelf())
+        check("but kids can't order what's on hold", public() == 0)
+        bid = call(bob, "/api/me")[1]["student"]["id"]
+        call(bob, f"/api/admin/students/{bid}/balance", {"amount": 50})
+        r = call(bob, "/api/orders", {"items": [{"id": 1, "qty": 1}]}); check("second kid blocked from held item", r[0] == 409, r)
+        r = call(bob, f"/api/admin/orders/{o1}", {"status": "ready"}, "PATCH"); check("admin approves", r[0] == 200 and r[1]["order"]["status"] == "ready", r)
+        check("approving takes it off the shelf (sold out)", shelf() == (0, 0) and public() == 0, shelf())
+        bal = call(alice, "/api/me")[1]["student"]["balance_cents"]
+        call(bob, f"/api/admin/orders/{o1}", {"status": "cancelled"}, "PATCH")
+        check("cancelling approved order restocks and refunds", shelf() == (1, 0) and call(alice, "/api/me")[1]["student"]["balance_cents"] > bal)
+        r = call(alice, "/api/orders", {"items": [{"id": 1, "qty": 1}]}); o2 = r[1]["order"]["id"]
+        bal = call(alice, "/api/me")[1]["student"]["balance_cents"]
+        call(bob, f"/api/admin/orders/{o2}", {"status": "cancelled"}, "PATCH")
+        check("declining a waiting order refunds, shelf unchanged", shelf() == (1, 0) and call(alice, "/api/me")[1]["student"]["balance_cents"] > bal)
+        r = call(alice, "/api/orders", {"items": [{"id": 1, "qty": 1}]}); o3 = r[1]["order"]["id"]
+        call(bob, "/api/admin/products/1", {"stock": 0}, "PATCH")
+        r = call(bob, f"/api/admin/orders/{o3}", {"status": "ready"}, "PATCH"); check("can't approve with nothing on the shelf", r[0] == 409 and "stock" in r[1]["error"], r)
+        call(bob, "/api/admin/products/1", {"stock": 1}, "PATCH")
+        r = call(bob, f"/api/admin/orders/{o3}", {"status": "picked_up"}, "PATCH"); check("straight to picked up also takes stock", r[0] == 200 and shelf() == (0, 0), shelf())
+        call(bob, "/api/admin/products/1", {"stock": start}, "PATCH")
+
         # ---- admins recognized by account ----
         r = call(alice, "/api/me")[1]["student"]; check("kid account is not admin", r["is_admin"] is False, r)
         r = call(bob, "/api/me")[1]["student"]; check("admin account recognized on the store", r["is_admin"] and r["admin_locked"], r)

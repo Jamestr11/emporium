@@ -166,6 +166,9 @@ def init_db():
         )
         if "is_admin" not in {r["name"] for r in DB.execute("PRAGMA table_info(students)")}:
             DB.execute("ALTER TABLE students ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        if "stock_taken" not in {r["name"] for r in DB.execute("PRAGMA table_info(orders)")}:
+            # Orders placed before approvals existed already took their items out of stock.
+            DB.execute("ALTER TABLE orders ADD COLUMN stock_taken INTEGER NOT NULL DEFAULT 1")
         if "student_id" not in {r["name"] for r in DB.execute("PRAGMA table_info(orders)")}:
             DB.execute("ALTER TABLE orders ADD COLUMN student_id INTEGER REFERENCES students(id)")
         count = DB.execute("SELECT COUNT(*) FROM products").fetchone()[0]
@@ -189,14 +192,24 @@ def init_db():
 
 # ---------- helpers ----------
 
+def on_hold(product_id):
+    """Items in orders waiting for staff approval: paid for, but not yet taken out of stock."""
+    return DB.execute(
+        "SELECT COALESCE(SUM(i.qty),0) FROM order_items i JOIN orders o ON o.id=i.order_id "
+        "WHERE i.product_id=? AND o.stock_taken=0 AND o.status != 'cancelled'", (product_id,)).fetchone()[0]
+
+
 def product_dict(row, admin=False):
+    held = on_hold(row["id"])
     d = {
         "id": row["id"],
         "name": row["name"],
         "description": row["description"],
         "category": row["category"],
         "price_cents": row["price_cents"],
-        "stock": row["stock"],
+        # Students see what's still orderable; staff see the real shelf count.
+        "stock": row["stock"] if admin else max(0, row["stock"] - held),
+        "on_hold": held,
         "image_url": row["image_url"],
     }
     if admin:
@@ -617,8 +630,8 @@ def create_order(h, q):
             p = DB.execute("SELECT * FROM products WHERE id=? AND active=1", (pid,)).fetchone()
             if not p:
                 raise ApiError(409, "An item in your cart is no longer available.")
-            if p["stock"] < qty:
-                left = p["stock"]
+            if p["stock"] - on_hold(pid) < qty:
+                left = max(0, p["stock"] - on_hold(pid))
                 msg = f"Only {left} {p['name']} left." if left else f"{p['name']} just sold out."
                 raise ApiError(409, msg)
             lines.append((p, qty))
@@ -640,7 +653,7 @@ def create_order(h, q):
             code = new_code()
         cur = DB.execute(
             "INSERT INTO orders (code, customer_name, customer_contact, note, status, total_cents, created_at, updated_at, student_id)"
-            " VALUES (?,?,?,?, 'new', ?,?,?,?)",
+            " VALUES (?,?,?,?, 'new', ?,?,?,?)",  # 'new' = waiting for staff approval
             (code, name, contact, note, total, now, now, student["id"]),
         )
         oid = cur.lastrowid
@@ -650,7 +663,7 @@ def create_order(h, q):
                 "INSERT INTO order_items (order_id, product_id, name, price_cents, qty) VALUES (?,?,?,?,?)",
                 (oid, p["id"], p["name"], p["price_cents"], qty),
             )
-            DB.execute("UPDATE products SET stock = stock - ? WHERE id=?", (qty, p["id"]))
+        DB.execute("UPDATE orders SET stock_taken=0 WHERE id=?", (oid,))  # stock comes off when staff approve
         row = DB.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
         bal = DB.execute("SELECT balance_cents FROM students WHERE id=?", (student["id"],)).fetchone()["balance_cents"]
         h.send_json(201, {"order": order_dict(row), "balance_cents": bal})
@@ -1028,10 +1041,9 @@ def admin_update_order(h, q, oid):
         if not row:
             raise ApiError(404, "Order not found.")
         old = row["status"]
-        # Cancelling returns items to stock and refunds the student; reopening reverses both.
+        items = DB.execute("SELECT product_id, name, qty FROM order_items WHERE order_id=?", (oid,)).fetchall()
+        # Money: held from the moment the student orders; cancelling (declining) refunds it.
         if old != "cancelled" and status == "cancelled":
-            for it in DB.execute("SELECT product_id, qty FROM order_items WHERE order_id=?", (oid,)):
-                DB.execute("UPDATE products SET stock = stock + ? WHERE id=?", (it["qty"], it["product_id"]))
             if row["student_id"]:
                 move_balance(row["student_id"], row["total_cents"], "refund", f"Order {row['code']} cancelled", int(oid))
         elif old == "cancelled" and status != "cancelled":
@@ -1040,8 +1052,26 @@ def admin_update_order(h, q, oid):
                     move_balance(row["student_id"], -row["total_cents"], "order", f"Order {row['code']} reopened", int(oid))
                 except ApiError:
                     raise ApiError(409, "The student doesn't have enough balance to reopen this order.")
-            for it in DB.execute("SELECT product_id, qty FROM order_items WHERE order_id=?", (oid,)):
-                DB.execute("UPDATE products SET stock = MAX(stock - ?, 0) WHERE id=?", (it["qty"], it["product_id"]))
+        # Stock: comes off the shelf only once staff approve (ready / picked up).
+        take = status in ("ready", "picked_up")
+        if take and not row["stock_taken"]:
+            for it in items:
+                p = DB.execute("SELECT stock FROM products WHERE id=?", (it["product_id"],)).fetchone()
+                if p and p["stock"] < it["qty"]:
+                    raise ApiError(409, f"Not enough {it['name']} in stock to approve this (have {p['stock']}).")
+            for it in items:
+                DB.execute("UPDATE products SET stock = stock - ? WHERE id=?", (it["qty"], it["product_id"]))
+            DB.execute("UPDATE orders SET stock_taken=1 WHERE id=?", (oid,))
+        elif not take and row["stock_taken"]:
+            for it in items:
+                DB.execute("UPDATE products SET stock = stock + ? WHERE id=?", (it["qty"], it["product_id"]))
+            DB.execute("UPDATE orders SET stock_taken=0 WHERE id=?", (oid,))
+        if status == "new" and old == "cancelled":
+            # Back to waiting: make sure the items are still there to hold.
+            for it in items:
+                p = DB.execute("SELECT stock FROM products WHERE id=?", (it["product_id"],)).fetchone()
+                if p and p["stock"] - on_hold(it["product_id"]) < it["qty"]:
+                    raise ApiError(409, f"Not enough {it['name']} left to reopen this order.")
         DB.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?", (status, time.time(), oid))
         row = DB.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
     h.send_json(200, {"order": order_dict(row, include_contact=True)})

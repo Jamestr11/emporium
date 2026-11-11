@@ -3,7 +3,7 @@
 Pickup-order website for The Emporium, the Alpha High School store.
 
 - **Store** (`/`) — students must sign in with their school Google account to see anything; then they browse items and order. Orders are paid from their Emporium balance; they get a code (like `EM-4K7QZ`) to show at pickup. Sold-out items can't be ordered.
-- **Staff** (`/admin`) — password-protected. See incoming orders (New → Ready → Picked up, or Cancel, which restocks the items and refunds the student), manage student balances, and manage inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
+- **Staff** (`/admin`) — every order waits for staff approval: **✓ Approve** takes the items off the shelf (an item shows Sold out when it hits 0), **Decline** refunds the student. Approved orders then get **Picked up** (or Cancel, which restocks and refunds). While an order waits, its items are on hold so nobody else can order the last one. Staff also manage student balances, requests and inventory: add one item, paste many at once, change stock with +/−, edit price/name/photo, hide or delete items.
 
 Python 3.9+. The only dependency is `anthropic` (for Add by name): `pip install -r requirements.txt`. Everything else works without it.
 

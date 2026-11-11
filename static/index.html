@@ -119,7 +119,7 @@ function renderChips() {
 }
 
 function stockLabel(p) {
-  if (p.stock <= 0) return `<span class="stock">Sold out</span>`;
+  if (p.stock <= 0) return `<span class="stock">${p.on_hold ? "On hold for other orders" : "Sold out"}</span>`;
   if (p.stock <= 5) return `<span class="stock low">Only ${p.stock} left</span>`;
   return `<span class="stock">${p.stock} in stock</span>`;
 }
@@ -278,8 +278,8 @@ function closeDrawer() {
   renderCartBadge();
 }
 
-const STATUS_TEXT = { new: "Received — we're getting it ready", ready: "Ready for pickup!", picked_up: "Picked up", cancelled: "Cancelled — refunded to your balance" };
-const STATUS_LABEL = { new: "New", ready: "Ready", picked_up: "Picked up", cancelled: "Cancelled" };
+const STATUS_TEXT = { new: "Waiting for staff to approve", ready: "Approved — ready for pickup!", picked_up: "Picked up", cancelled: "Cancelled — refunded to your balance" };
+const STATUS_LABEL = { new: "Waiting", ready: "Approved", picked_up: "Picked up", cancelled: "Cancelled" };
 
 function renderDrawer() {
   const c = $("#drawerContent"), f = $("#drawerFooter"), t = $("#drawerTitle");
@@ -328,7 +328,7 @@ function renderDrawer() {
     c.innerHTML = o ? `<div class="confirm">
       <p>Thanks, ${esc((me?.name || "").split(" ")[0] || "friend")}! Show this code at the Emporium:</p>
       <div class="code">${esc(o.code)}</div>
-      <p class="hint">We'll get it ready. You'll see when it's ready under your account.</p>
+      <p class="hint">The Emporium staff will approve your order. You'll see when it's approved under your account. If it's declined, your money comes back.</p>
       ${o.items.map(i => `<div class="line"><div class="n">${esc(i.name)}</div><span>× ${i.qty}</span></div>`).join("")}
       <div class="total" style="margin-top:12px"><span>Paid from balance</span><span>${money(o.total_cents)}</span></div>
       <p class="hint" style="margin-top:6px">Balance left: <b>${money(me?.balance_cents ?? 0)}</b></p>

@@ -382,7 +382,7 @@ async function loadProducts() {
   $("#catList").innerHTML = [...new Set(products.map(p => p.category))].map(c => `<option value="${esc(c)}">`).join("");
 }
 
-const LABEL = { new: "New", ready: "Ready", picked_up: "Picked up", cancelled: "Cancelled" };
+const LABEL = { new: "Needs approval", ready: "Approved", picked_up: "Picked up", cancelled: "Cancelled" };
 function renderOrders() {
   const body = $("#tabBody"); if (!body) return;
   const filters = Object.keys(LABEL).map(s => `<button class="chip ${s === orderFilter ? "on" : ""}" data-filter="${s}">${LABEL[s]} · ${counts[s] ?? 0}</button>`).join("");
@@ -397,12 +397,13 @@ function renderOrders() {
       <div style="margin-top:6px">${o.items.map(i => `${i.qty}× ${esc(i.name)}`).join(" · ")}</div>
       ${o.note ? `<div class="note">${esc(o.note)}</div>` : ""}
       <div class="actions">
-        ${o.status === "new" ? `<button class="btn small primary" data-status="ready" data-id="${o.id}">Mark ready</button>` : ""}
-        ${o.status === "new" || o.status === "ready" ? `<button class="btn small ${o.status === "ready" ? "primary" : ""}" data-status="picked_up" data-id="${o.id}">Picked up</button>` : ""}
-        ${o.status === "new" || o.status === "ready" ? `<button class="btn small danger" data-status="cancelled" data-id="${o.id}">Cancel</button>` : ""}
+        ${o.status === "new" ? `<button class="btn small primary" data-status="ready" data-id="${o.id}">✓ Approve</button>
+          <button class="btn small danger" data-status="cancelled" data-id="${o.id}">Decline</button>` : ""}
+        ${o.status === "ready" ? `<button class="btn small primary" data-status="picked_up" data-id="${o.id}">Picked up</button>
+          <button class="btn small danger" data-status="cancelled" data-id="${o.id}">Cancel</button>` : ""}
         ${o.status === "cancelled" || o.status === "picked_up" ? `<button class="btn small" data-status="new" data-id="${o.id}">Reopen</button>` : ""}
       </div>
-    </article>`).join("") : `<p class="empty">No ${LABEL[orderFilter].toLowerCase()} orders.</p>`;
+    </article>`).join("") : `<p class="empty">${orderFilter === "new" ? "No orders waiting for approval." : `No orders in “${LABEL[orderFilter]}”.`}</p>`;
   body.innerHTML = `<div class="chips" style="padding-top:4px">${filters}</div><div class="orders">${list}</div>`;
 }
 
@@ -617,7 +618,7 @@ function renderInventory() {
           </div></td>
           <td class="c-cat">${esc(p.category)}</td>
           <td class="num">${money(p.price_cents)}</td>
-          <td class="num"><div class="stepper"><button data-stock="${p.id}" data-d="-1" aria-label="One less">−</button><span>${p.stock}</span><button data-stock="${p.id}" data-d="1" aria-label="One more">+</button></div></td>
+          <td class="num"><div class="stepper"><button data-stock="${p.id}" data-d="-1" aria-label="One less">−</button><span>${p.stock}</span><button data-stock="${p.id}" data-d="1" aria-label="One more">+</button></div>${p.on_hold ? `<div class="hint" title="In orders waiting for your approval">${p.on_hold} on hold</div>` : ""}</td>
           <td class="num"><button class="btn small" data-edit="${p.id}">Edit</button></td>
         </tr>`).join("")}</tbody></table>` : `<p class="empty">${products.length ? "No matches." : "No items yet — add your first one above."}</p>`}
     </section>`;
@@ -780,7 +781,7 @@ document.addEventListener("click", async e => {
     else if (b.id === "closeHistory") $("#historyDialog").close();
     else if (b.dataset.filter) { orderFilter = b.dataset.filter; renderOrders(); await loadOrders(); }
     else if (b.dataset.status) {
-      if (b.dataset.status === "cancelled" && !confirm("Cancel this order? Its items go back into stock and the student gets their money back.")) return;
+      if (b.dataset.status === "cancelled" && !confirm("Decline / cancel this order? The student gets their money back, and any items taken from stock go back.")) return;
       b.disabled = true;
       await api("/api/admin/orders/" + b.dataset.id, { method: "PATCH", body: JSON.stringify({ status: b.dataset.status }) });
       toast(LABEL[b.dataset.status]); await Promise.all([loadOrders(), loadProducts()]);
