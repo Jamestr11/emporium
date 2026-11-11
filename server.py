@@ -1151,9 +1151,9 @@ def admin_students(h, q):
     term = (q.get("q") or [""])[0].strip().lower()
     if term:
         like = f"%{term}%"
-        rows = DB.execute("SELECT * FROM students WHERE lower(email) LIKE ? OR lower(name) LIKE ? ORDER BY lower(COALESCE(NULLIF(name, ""), email))", (like, like)).fetchall()
+        rows = DB.execute("SELECT * FROM students WHERE lower(email) LIKE ? OR lower(name) LIKE ? ORDER BY lower(COALESCE(NULLIF(name, ''), email))", (like, like)).fetchall()
     else:
-        rows = DB.execute("SELECT * FROM students ORDER BY lower(COALESCE(NULLIF(name, ""), email))").fetchall()
+        rows = DB.execute("SELECT * FROM students ORDER BY lower(COALESCE(NULLIF(name, ''), email))").fetchall()
     total = DB.execute("SELECT COUNT(*) c, COALESCE(SUM(balance_cents),0) b FROM students").fetchone()
     h.send_json(200, {"students": [student_dict(r) for r in rows], "count": total["c"], "total_balance_cents": total["b"]})
 
